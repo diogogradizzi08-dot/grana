@@ -1,0 +1,433 @@
+/* Leitura inteligente: foto ou PDF de nota de mercado, NF, boleto, contracheque.
+   Dois motores:
+   - IA do Google (Gemini) com a chave GRÁTIS do próprio usuário: lê qualquer documento,
+     entende item por item e classifica. É o modo recomendado.
+   - Leitor local (Tesseract, roda no aparelho, sem internet depois de baixado): mais
+     limitado, lê o texto e o app interpreta por regras. Serve de reserva e é 100% privado. */
+(function (G) {
+  const MODELS = ['gemini-flash-latest', 'gemini-2.5-flash', 'gemini-2.0-flash'];
+
+  G.openScan = (hint = 'auto') => {
+    const hasKey = !!G.state.settings.geminiKey;
+    const s = G.sheet(`
+      <div class="add-head"><button class="icon-btn" data-close>${G.icon('x')}</button><h3 class="sheet-title" style="margin:0">Ler documento</h3><span style="width:40px"></span></div>
+      <p class="muted center">Fotografe ou envie o arquivo. O app lê, separa os itens e classifica — você só confere.</p>
+      <div class="scan-types">
+        <button data-h="receipt" class="${hint === 'receipt' ? 'on' : ''}"><span>🛒</span><b>Nota de mercado</b><small>cupom, NFC-e</small></button>
+        <button data-h="payslip" class="${hint === 'payslip' ? 'on' : ''}"><span>💼</span><b>Contracheque</b><small>holerite</small></button>
+        <button data-h="invoice" class="${hint === 'invoice' ? 'on' : ''}"><span>🧾</span><b>Nota fiscal / conta</b><small>NF-e, boleto, fatura</small></button>
+        <button data-h="auto" class="${hint === 'auto' ? 'on' : ''}"><span>✨</span><b>Descobrir sozinho</b><small>qualquer um</small></button>
+      </div>
+      <div class="scan-actions">
+        <label class="btn primary big">${G.icon('camera', 20)} Tirar foto<input type="file" accept="image/*" capture="environment" hidden id="camIn"></label>
+        <label class="btn ghost big">${G.icon('upload', 20)} Escolher arquivo<input type="file" accept="image/*,application/pdf" hidden id="fileIn"></label>
+      </div>
+      <div class="engine-note ${hasKey ? 'ok' : ''}">${hasKey
+        ? `${G.icon('sparkles', 18)}<span><b>Leitura com IA ativada.</b> Lê notas amassadas, PDF e contracheques de qualquer empresa.</span>`
+        : `${G.icon('info', 18)}<span><b>Leitor básico (sem IA).</b> Funciona com fotos nítidas de cupom e holerite. Para ler muito melhor — inclusive PDF — ative a IA grátis em <a href="#" id="goKey">Ajustes → Leitura inteligente</a>.</span>`}</div>`, { wide: true });
+    let docHint = hint;
+    G.$$('.scan-types button', s.el).forEach((b) => (b.onclick = () => { docHint = b.dataset.h; G.$$('.scan-types button', s.el).forEach((x) => x.classList.toggle('on', x === b)); }));
+    const go = s.el.querySelector('#goKey'); if (go) go.onclick = (e) => { e.preventDefault(); s.close(); G.go('settings'); setTimeout(() => G.openAiSetup(), 300); };
+    const onFile = (e) => { const file = e.target.files[0]; if (!file) return; s.close(); process(file, docHint); };
+    s.el.querySelector('#camIn').onchange = onFile;
+    s.el.querySelector('#fileIn').onchange = onFile;
+  };
+
+  // ---------- processamento ----------
+  async function process(file, hint) {
+    const busy = G.sheet(`<div class="scan-busy"><div class="scan-anim">${G.icon('scan', 46)}<i></i></div>
+      <h3 class="sheet-title" id="busyT">Lendo o documento…</h3><p class="muted" id="busyS">Isso leva alguns segundos.</p></div>`);
+    const setMsg = (t, sub) => { const a = busy.el.querySelector('#busyT'), b = busy.el.querySelector('#busyS'); if (a) a.textContent = t; if (b && sub != null) b.textContent = sub; };
+    let preview = null;
+    try {
+      const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
+      let data, mime;
+      if (isPdf) { data = await fileToBase64(file); mime = 'application/pdf'; }
+      else { const img = await shrinkImage(file, 1800); data = img.base64; mime = 'image/jpeg'; preview = img.url; }
+      let result;
+      if (G.state.settings.geminiKey) {
+        setMsg('A IA está lendo o documento…', 'Separando itens e classificando.');
+        result = await readWithGemini(data, mime, hint);
+      } else {
+        if (isPdf) throw new Error('O leitor básico não lê PDF. Tire uma foto do documento ou ative a leitura com IA em Ajustes.');
+        setMsg('Lendo o texto da imagem…', 'Na primeira vez o leitor é baixado (~10 MB).');
+        const text = await ocrLocal(preview, (p) => setMsg('Lendo o texto da imagem… ' + Math.round(p * 100) + '%', null));
+        result = parseLocal(text, hint);
+      }
+      busy.close();
+      review(normalize(result), preview);
+    } catch (e) {
+      console.error(e);
+      busy.close();
+      G.sheet(`<div class="center"><div class="big-ic warn">${G.icon('alert', 36)}</div><h3 class="sheet-title">Não consegui ler</h3><p class="muted">${G.esc(e.message || String(e))}</p>
+        <div class="row-btns"><button class="btn ghost" data-close>Fechar</button><button class="btn primary" id="again">Tentar de novo</button></div></div>`).el.querySelector('#again').onclick = () => { G.closeTopSheet(); G.openScan(hint); };
+    }
+  }
+
+  function fileToBase64(file) {
+    return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.onerror = () => rej(r.error); r.readAsDataURL(file); });
+  }
+  // fotos de celular têm 12 MP; 1800 px de lado é mais que suficiente para ler e sobe rápido
+  function shrinkImage(file, max) {
+    return new Promise((res, rej) => {
+      const url = URL.createObjectURL(file), img = new Image();
+      img.onload = () => {
+        const k = Math.min(1, max / Math.max(img.width, img.height));
+        const c = document.createElement('canvas'); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        const out = c.toDataURL('image/jpeg', 0.86);
+        URL.revokeObjectURL(url);
+        res({ base64: out.split(',')[1], url: out });
+      };
+      img.onerror = () => rej(new Error('Não consegui abrir a imagem.'));
+      img.src = url;
+    });
+  }
+
+  // ---------- motor 1: Gemini ----------
+  function prompt(hint) {
+    const exp = G.cats('expense').map((c) => c.id + ' = ' + c.name).join('; ');
+    const inc = G.cats('income').map((c) => c.id + ' = ' + c.name).join('; ');
+    return `Você é um assistente de finanças pessoais no Brasil. Leia o documento (foto ou PDF) e devolva SOMENTE um JSON válido.
+Tipo provável indicado pelo usuário: ${hint} (receipt = cupom/nota de mercado, payslip = contracheque/holerite, invoice = nota fiscal/boleto/conta/fatura, auto = descubra).
+
+Categorias de DESPESA (use o id): ${exp}
+Categorias de RECEITA (use o id): ${inc}
+
+Formato:
+{
+ "docType": "receipt" | "payslip" | "invoice" | "bill" | "other",
+ "kind": "expense" | "income",
+ "merchant": "nome curto e legível do estabelecimento ou empresa (ex.: 'Carrefour', não a razão social inteira)",
+ "date": "AAAA-MM-DD (data da compra, emissão ou competência do pagamento)",
+ "total": número em reais (valor efetivamente pago, já com descontos),
+ "paymentMethod": "dinheiro" | "debito" | "credito" | "pix" | "boleto" | null,
+ "items": [ { "name": "nome legível do produto/serviço, sem códigos, por extenso (ex.: 'Detergente Ypê 500ml')", "qty": número, "amount": valor total do item em reais já com desconto do item, "category": "id da categoria" } ],
+ "discount": desconto geral da nota em reais (0 se não houver),
+ "payslip": null ou { "employer": "empresa", "reference": "mês de referência AAAA-MM", "gross": total de vencimentos, "net": valor líquido,
+    "earnings": [ { "name": "Salário base / Horas extras / Adicional noturno / Férias / 13º...", "amount": n, "category": "id de RECEITA" } ],
+    "deductions": [ { "name": "INSS / IRRF / Vale-transporte / Plano de saúde...", "amount": n, "category": "id de DESPESA" } ] }
+}
+Regras:
+- Valores em número com ponto decimal (12.5), nunca texto.
+- Nota de mercado: liste TODOS os itens. Classifique cada item: alimentos = mercado; limpeza = casa; higiene/cosméticos = higiene; bebida alcoólica = bebidas; ração = pets; remédio = farmacia; pão/padaria = padaria.
+- A soma dos items menos "discount" deve bater com "total".
+- Contracheque: docType "payslip", kind "income", total = líquido. INSS, IRRF e contribuições = impostos; plano de saúde/odontológico = saude; vale-transporte = transporte; vale-refeição/alimentação descontado = restaurante; pensão alimentícia = filhos; empréstimo consignado = dividas; adiantamento salarial = outros. Em "items" repita as linhas de earnings.
+- Conta de luz/água/internet/telefone = contas; boleto de condomínio/aluguel = moradia.
+- Se um campo não existir, use null. Não invente itens.`;
+  }
+
+  async function readWithGemini(base64, mime, hint) {
+    const key = G.state.settings.geminiKey.trim();
+    const models = G.state.settings.aiModel ? [G.state.settings.aiModel, ...MODELS] : MODELS;
+    let lastErr;
+    for (const model of models) {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+        body: JSON.stringify({
+          contents: [{ role: 'user', parts: [{ text: prompt(hint) }, { inline_data: { mime_type: mime, data: base64 } }] }],
+          generationConfig: { temperature: 0, responseMimeType: 'application/json' },
+        }),
+      }).catch(() => { throw new Error('Sem internet? A leitura com IA precisa de conexão.'); });
+      if (res.status === 404) { lastErr = new Error('Modelo indisponível: ' + model); continue; }
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const msg = (body.error && body.error.message) || res.statusText;
+        if (res.status === 400 && /api key/i.test(msg)) throw new Error('A chave da IA é inválida. Confira em Ajustes → Leitura inteligente.');
+        if (res.status === 403) throw new Error('A chave da IA não tem permissão. Gere outra em aistudio.google.com e cole em Ajustes.');
+        if (res.status === 429) throw new Error('Limite grátis da IA atingido por agora. Espere um minuto e tente de novo.');
+        lastErr = new Error('Erro da IA: ' + msg); continue;
+      }
+      const text = (((body.candidates || [])[0] || {}).content || { parts: [] }).parts.map((p) => p.text || '').join('');
+      const json = text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1);
+      try { const r = JSON.parse(json); G.state.settings.aiModel = model; return r; } catch (e) { lastErr = new Error('A IA respondeu num formato inesperado. Tente outra foto.'); }
+    }
+    throw lastErr || new Error('Não foi possível usar a IA.');
+  }
+
+  // testa a chave antes de salvar
+  G.testGeminiKey = async (key) => {
+    for (const model of MODELS) {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key.trim() },
+        body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'Responda só: ok' }] }] }),
+      });
+      if (res.status === 404) continue;
+      if (res.ok) return model;
+      const b = await res.json().catch(() => ({}));
+      throw new Error((b.error && b.error.message) || 'Chave recusada (' + res.status + ')');
+    }
+    throw new Error('Nenhum modelo disponível para esta chave.');
+  };
+
+  // ---------- motor 2: leitor local ----------
+  async function ocrLocal(imgUrl, onProgress) {
+    if (!window.Tesseract) {
+      await new Promise((res, rej) => {
+        const sc = document.createElement('script');
+        sc.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
+        sc.onload = res; sc.onerror = () => rej(new Error('Não consegui baixar o leitor. Na primeira vez é preciso internet.'));
+        document.head.appendChild(sc);
+      });
+    }
+    const r = await window.Tesseract.recognize(imgUrl, 'por', { logger: (m) => m.status === 'recognizing text' && onProgress(m.progress) });
+    return r.data.text || '';
+  }
+
+  const MONEY_END = /(-?\d{1,3}(?:\.\d{3})*,\d{2}|-?\d+,\d{2})\s*[A-Z]?\s*$/;
+  function parseLocal(text, hint) {
+    const lines = text.split(/\n/).map((l) => l.replace(/\s+/g, ' ').trim()).filter(Boolean);
+    const all = G.norm(text);
+    const isPayslip = hint === 'payslip' || (hint === 'auto' && /contracheque|holerite|recibo de pagamento|demonstrativo de pagamento|vencimentos|proventos/.test(all));
+    const dm = text.match(/(\d{2})\/(\d{2})\/(\d{2,4})/);
+    const date = dm ? (dm[3].length === 2 ? '20' + dm[3] : dm[3]) + '-' + dm[2] + '-' + dm[1] : G.today();
+    const merchant = (lines.find((l) => /[A-Za-z]{3}/.test(l) && !/cnpj|cpf|ie:|endere|rua |av\.|documento/i.test(l)) || '').slice(0, 40);
+    if (isPayslip) return parsePayslipText(lines, date, merchant);
+
+    let total = 0;
+    const items = [];
+    for (const l of lines) {
+      const n = G.norm(l);
+      const m = l.match(MONEY_END);
+      if (!m) continue;
+      const v = G.parseMoney(m[1]) / 100;
+      if (/valor a pagar|valor pago|total r|valor total|^total/.test(n)) { if (v > total) total = v; continue; }
+      if (/troco|subtotal|sub total|desconto|dinheiro|cartao|credito|debito|pix|tributos|lei|icms|pis|cofins|qtd|itens|acrescimo/.test(n)) continue;
+      const name = l.replace(MONEY_END, '').replace(/^\d{1,4}\s+/, '').replace(/\d{6,14}/g, '').replace(/\d+[,.]?\d*\s*(un|kg|lt|l|pc|cx|g)\s*(x|\*)?\s*[\d.,]*/ig, '').replace(/\s+/g, ' ').trim();
+      if (name.length < 3 || v <= 0) continue;
+      items.push({ name: G.cap(name.toLowerCase()), qty: 1, amount: v, category: G.guessItemCategory(name) });
+    }
+    if (!total) total = items.reduce((a, i) => a + i.amount, 0);
+    const kind = hint === 'invoice' ? (G.guessCategory(merchant) || 'outros') : null;
+    if (!items.length && total) items.push({ name: merchant || 'Compra', qty: 1, amount: total, category: kind || 'outros' });
+    if (kind && items.length > 0) items.forEach((i) => (i.category = G.guessCategory(i.name) || kind));
+    return { docType: hint === 'invoice' ? 'invoice' : 'receipt', kind: 'expense', merchant, date, total, items, discount: 0, engine: 'local' };
+  }
+
+  function parsePayslipText(lines, date, merchant) {
+    const earnings = [], deductions = [];
+    let net = 0;
+    const EARN = /salario|ordenado|hora extra|horas extras|adicional|ferias|13|decimo|comissao|gratificacao|dsr|premio|bonus|abono|insalubridade|periculosidade|noturno/;
+    const DED = /inss|irrf|imposto|vale transp|v transp|plano|saude|odonto|unimed|pensao|emprestimo|consignado|falta|atraso|adiantamento|contribuicao|sindical|refeicao|alimentacao|seguro|desconto|coparticipacao/;
+    for (const l of lines) {
+      const m = l.match(MONEY_END);
+      if (!m) continue;
+      const raw = l.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+      const v = G.parseMoney(m[1]) / 100;
+      if (/liquido/.test(raw)) { net = Math.max(net, v); continue; }
+      if (/total|base de calc|base calc|base inss|base irrf|base fgts|fgts|bruto|sal(ario)? contr|faixa/.test(raw)) continue;
+      const name = G.cap(l.replace(MONEY_END, '').replace(MONEY_END, '').replace(/^\d{1,5}\s+/, '').replace(/\s\d+[,.]\d+\s*$/, '').trim().toLowerCase())
+        .replace(/\b(inss|irrf|fgts|vt|vr|va|dsr|plr)\b/gi, (m) => m.toUpperCase());
+      if (DED.test(raw)) deductions.push({ name, amount: v, category: dedCategory(raw) });
+      else if (EARN.test(raw)) earnings.push({ name, amount: v, category: /ferias|13|decimo|bonus|premio|gratificacao|comissao|hora extra|horas extras|plr/.test(raw) ? 'adicionais' : 'salario' });
+    }
+    const gross = earnings.reduce((a, e) => a + e.amount, 0);
+    const ded = deductions.reduce((a, e) => a + e.amount, 0);
+    if (!net) net = gross - ded;
+    return { docType: 'payslip', kind: 'income', merchant: merchant || 'Empresa', date, total: net, items: earnings, payslip: { employer: merchant, gross, net, earnings, deductions }, engine: 'local' };
+  }
+  function dedCategory(raw) {
+    if (/inss|irrf|imposto|contribuicao|sindical/.test(raw)) return 'impostos';
+    if (/plano|saude|odonto|unimed|coparticipacao/.test(raw)) return 'saude';
+    if (/transp/.test(raw)) return 'transporte';
+    if (/refeicao|alimentacao/.test(raw)) return 'restaurante';
+    if (/pensao/.test(raw)) return 'filhos';
+    if (/emprestimo|consignado/.test(raw)) return 'dividas';
+    return 'outros';
+  }
+
+  // ---------- normalização: tudo em centavos, categorias válidas ----------
+  function normalize(r) {
+    const validExp = new Set(G.cats('expense').map((c) => c.id)), validInc = new Set(G.cats('income').map((c) => c.id));
+    const kind = r.docType === 'payslip' ? 'income' : (r.kind === 'income' ? 'income' : 'expense');
+    const fixCat = (c, k, name) => {
+      const ok = k === 'income' ? validInc : validExp;
+      if (ok.has(c)) return c;
+      const g = k === 'income' ? G.guessCategory(name, 'income') : (r.docType === 'receipt' ? G.guessItemCategory(name) : G.guessCategory(name));
+      return g && ok.has(g) ? g : (k === 'income' ? 'outras_receitas' : 'outros');
+    };
+    const cents = (v) => Math.round((Number(v) || 0) * 100);
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(r.date || '') && r.date <= G.addDays(G.today(), 40) && r.date >= '2000-01-01' ? r.date : G.today();
+    const out = {
+      docType: r.docType || 'other', kind, date, engine: r.engine || 'ia',
+      merchant: (r.merchant || '').trim() || (kind === 'income' ? 'Salário' : 'Compra'),
+      total: cents(r.total),
+      discount: cents(r.discount),
+      items: (r.items || []).filter((i) => Number(i.amount) > 0).map((i) => ({ name: (i.name || 'Item').trim(), qty: i.qty || 1, amount: cents(i.amount), categoryId: fixCat(i.category, kind, i.name || '') })),
+    };
+    if (r.payslip) {
+      const p = r.payslip;
+      out.payslip = {
+        employer: p.employer || out.merchant, reference: p.reference || '',
+        earnings: (p.earnings || []).filter((e) => Number(e.amount) > 0).map((e) => ({ name: e.name, amount: cents(e.amount), categoryId: fixCat(e.category, 'income', e.name) })),
+        deductions: (p.deductions || []).filter((e) => Number(e.amount) > 0).map((e) => ({ name: e.name, amount: cents(e.amount), categoryId: fixCat(e.category, 'expense', e.name) })),
+      };
+      out.payslip.gross = G.sum(out.payslip.earnings, (e) => e.amount) || cents(p.gross);
+      out.payslip.net = cents(p.net) || out.payslip.gross - G.sum(out.payslip.deductions, (e) => e.amount);
+      out.total = out.payslip.net;
+    }
+    if (!out.items.length && out.total && !out.payslip) out.items.push({ name: out.merchant, qty: 1, amount: out.total, categoryId: fixCat(null, kind, out.merchant) });
+    if (!out.total) out.total = G.sum(out.items, (i) => i.amount) - out.discount;
+    return out;
+  }
+
+  // ---------- conferência ----------
+  function review(d, preview) {
+    if (d.payslip) return reviewPayslip(d, preview);
+    let mode = 'split';
+    let accountId = G.state.settings.lastAccount || (G.activeAccounts()[0] || {}).id;
+    const s = G.sheet(`
+      <div class="add-head"><button class="icon-btn" data-close>${G.icon('x')}</button><h3 class="sheet-title" style="margin:0">Confira e salve</h3><span style="width:40px"></span></div>
+      <div class="review-top">
+        ${preview ? `<img class="review-img" src="${preview}" alt="">` : `<div class="review-img pdf">${G.icon('file', 34)}</div>`}
+        <div class="review-meta">
+          <span class="pill ${d.engine === 'local' ? '' : 'ai'}">${d.engine === 'local' ? 'leitor básico' : G.icon('sparkles', 12) + ' lido pela IA'}</span>
+          <input id="rvMerchant" class="desc-input" value="${G.esc(d.merchant)}">
+          <div class="review-line"><label class="chip">${G.icon('calendar', 16)}<input type="date" id="rvDate" value="${d.date}"></label><b class="review-total" id="rvTotal"></b></div>
+        </div>
+      </div>
+      <div id="rvWarn"></div>
+      <div class="sec-label">Por categoria</div><div id="rvSum"></div>
+      <div class="sec-label">Itens <span class="muted">— toque na categoria para trocar</span></div>
+      <div class="card flush" id="rvItems"></div>
+      <button class="more-toggle" id="rvAdd">${G.icon('plus', 18)} Adicionar item</button>
+      <div class="sec-label">Pago com</div><div id="rvAcc"></div>
+      <div class="sec-label">Como lançar</div>
+      <div class="seg wide" id="rvMode"><button data-m="split" class="on">1 lançamento dividido</button><button data-m="each">1 por categoria</button></div>
+      <div class="add-foot"><button class="btn primary big" id="rvSave">Salvar</button></div>`, { wide: true, full: true });
+    const el = s.el;
+    const paint = () => {
+      const sumItems = G.sum(d.items, (i) => i.amount);
+      const totalNow = sumItems - d.discount;
+      el.querySelector('#rvTotal').textContent = G.money(totalNow, { force: true });
+      const diff = d.total - totalNow;
+      el.querySelector('#rvWarn').innerHTML = d.total && Math.abs(diff) > 2
+        ? `<div class="warn-box">${G.icon('alert', 18)}<span>Os itens somam ${G.money(totalNow, { force: true })}, mas a nota diz ${G.money(d.total, { force: true })}. <a href="#" id="fixDiff">Ajustar a diferença</a> ou confira os valores.</span></div>` : '';
+      const fx = el.querySelector('#fixDiff');
+      if (fx) fx.onclick = (e) => { e.preventDefault(); d.items.push({ name: diff > 0 ? 'Diferença (taxas/itens não lidos)' : 'Desconto', qty: 1, amount: diff, categoryId: (G.byCategory([{ type: 'expense', amount: 0, splits: d.items.map((i) => ({ categoryId: i.categoryId, amount: i.amount })) }], 'expense')[0] || {}).categoryId || 'outros' }); paint(); };
+      const groups = {};
+      d.items.forEach((i) => (groups[i.categoryId] = (groups[i.categoryId] || 0) + i.amount));
+      const rows = Object.entries(groups).sort((a, b) => b[1] - a[1]);
+      const tot = Math.max(1, G.sum(rows, (r) => r[1]));
+      el.querySelector('#rvSum').innerHTML = `<div class="stack-bar">${rows.map(([c, v]) => `<i style="width:${v / tot * 100}%;background:${G.cat(c).color}"></i>`).join('')}</div>
+        <div class="legend">${rows.map(([c, v]) => `<span>${G.cat(c).icon} ${G.esc(G.cat(c).name)} <b>${G.money(v, { force: true })}</b></span>`).join('')}</div>`;
+      el.querySelector('#rvItems').innerHTML = d.items.map((i, idx) => `<div class="item-row" data-i="${idx}">
+        <button class="item-cat" data-cat="${idx}">${G.catBadge(G.cat(i.categoryId), 34)}</button>
+        <div class="item-main"><input class="item-name" data-n="${idx}" value="${G.esc(i.name)}"><small>${G.esc(G.cat(i.categoryId).name)}${i.qty > 1 ? ' · ' + String(i.qty).replace('.', ',') + ' un' : ''}</small></div>
+        <input class="item-amt" data-a="${idx}" inputmode="decimal" value="${(i.amount / 100).toFixed(2).replace('.', ',')}">
+        <button class="icon-btn sm" data-rm="${idx}">${G.icon('x', 16)}</button></div>`).join('') || '<div class="empty small">Nenhum item.</div>';
+      G.$$('[data-cat]', el).forEach((b) => (b.onclick = () => pickCat('expense', d.items[b.dataset.cat].categoryId, (id) => {
+        const it = d.items[b.dataset.cat];
+        // mesma categoria para itens com o mesmo nome — e o app aprende
+        it.categoryId = id; G.learn(it.name, id, 'item'); paint();
+      })));
+      G.$$('[data-n]', el).forEach((inp) => (inp.onchange = () => (d.items[inp.dataset.n].name = inp.value)));
+      G.$$('[data-a]', el).forEach((inp) => (inp.onchange = () => { d.items[inp.dataset.a].amount = G.parseMoney(inp.value); paint(); }));
+      G.$$('[data-rm]', el).forEach((b) => (b.onclick = () => { d.items.splice(Number(b.dataset.rm), 1); paint(); }));
+    };
+    // itens que o usuário já reclassificou antes voltam com a categoria dele
+    d.items.forEach((i) => { const r = G.state.rules['item:' + G.norm(i.name)]; if (r) i.categoryId = r; });
+    paint();
+    el.querySelector('#rvAdd').onclick = () => { d.items.push({ name: 'Item', qty: 1, amount: 0, categoryId: 'mercado' }); paint(); };
+    el.querySelector('#rvAcc').appendChild(G.accountChips(accountId, (id) => (accountId = id)));
+    G.$$('#rvMode button', el).forEach((b) => (b.onclick = () => { mode = b.dataset.m; G.$$('#rvMode button', el).forEach((x) => x.classList.toggle('on', x === b)); }));
+    el.querySelector('#rvSave').onclick = () => {
+      const merchant = el.querySelector('#rvMerchant').value.trim() || d.merchant;
+      const date = el.querySelector('#rvDate').value || d.date;
+      if (d.discount) d.items.push({ name: 'Desconto', qty: 1, amount: -d.discount, categoryId: d.items[0] ? d.items[0].categoryId : 'outros' });
+      const groups = {};
+      d.items.forEach((i) => { (groups[i.categoryId] = groups[i.categoryId] || []).push(i); });
+      const total = G.sum(d.items, (i) => i.amount);
+      if (total <= 0) { G.toast('O total precisa ser maior que zero', { icon: 'alert' }); return; }
+      const items = d.items.map((i) => ({ name: i.name, qty: i.qty, amount: i.amount, categoryId: i.categoryId }));
+      const cats = Object.keys(groups);
+      if (mode === 'split' || cats.length === 1) {
+        const splits = cats.map((c) => ({ categoryId: c, amount: G.sum(groups[c], (i) => i.amount) })).filter((x) => x.amount).sort((a, b) => b.amount - a.amount);
+        G.addTx({ type: d.kind, amount: total, date, desc: merchant, categoryId: splits[0].categoryId, accountId, splits: splits.length > 1 ? splits : undefined, items, source: 'scan' });
+      } else {
+        for (const c of cats) {
+          const amt = G.sum(groups[c], (i) => i.amount);
+          if (amt > 0) G.addTx({ type: d.kind, amount: amt, date, desc: `${merchant} · ${G.cat(c).name}`, categoryId: c, accountId, items: groups[c], source: 'scan' });
+        }
+      }
+      G.state.settings.lastAccount = accountId;
+      G.save(); G.render(); s.close();
+      G.toast(`Nota de ${G.money(total)} lançada em ${cats.length} categoria(s)`, { icon: 'sparkles' });
+    };
+  }
+
+  function reviewPayslip(d, preview) {
+    const p = d.payslip;
+    let mode = 'detail';
+    let accountId = G.activeAccounts().find((a) => a.type === 'checking') ? G.activeAccounts().find((a) => a.type === 'checking').id : (G.activeAccounts()[0] || {}).id;
+    const s = G.sheet(`
+      <div class="add-head"><button class="icon-btn" data-close>${G.icon('x')}</button><h3 class="sheet-title" style="margin:0">Contracheque</h3><span style="width:40px"></span></div>
+      <div class="review-top">
+        ${preview ? `<img class="review-img" src="${preview}" alt="">` : `<div class="review-img pdf">${G.icon('file', 34)}</div>`}
+        <div class="review-meta"><span class="pill ${d.engine === 'local' ? '' : 'ai'}">${d.engine === 'local' ? 'leitor básico' : G.icon('sparkles', 12) + ' lido pela IA'}</span>
+          <input id="psEmp" class="desc-input" value="${G.esc(p.employer || d.merchant)}">
+          <label class="chip">${G.icon('calendar', 16)}<input type="date" id="psDate" value="${d.date}"></label></div>
+      </div>
+      <div class="payslip-flow">
+        <div><small>Bruto</small><b class="pos" id="psGross"></b></div><span>−</span>
+        <div><small>Descontos</small><b class="neg" id="psDed"></b></div><span>=</span>
+        <div><small>Líquido</small><b id="psNet"></b></div>
+      </div>
+      <div id="psBar"></div>
+      <div class="sec-label">Vencimentos (o que você ganhou)</div><div class="card flush" id="psEarn"></div>
+      <div class="sec-label">Descontos (para onde foi antes de cair na conta)</div><div class="card flush" id="psDeds"></div>
+      <div class="sec-label">Caiu na conta</div><div id="psAcc"></div>
+      <div class="sec-label">Como lançar</div>
+      <div class="seg wide" id="psMode"><button data-m="detail" class="on">Bruto + descontos</button><button data-m="net">Só o líquido</button></div>
+      <small class="muted block" id="psModeTxt"></small>
+      <div class="add-foot"><button class="btn primary big" id="psSave">Salvar</button></div>`, { wide: true, full: true });
+    const el = s.el;
+    const lines = (arr, kind, key) => arr.map((e, i) => `<div class="item-row"><button class="item-cat" data-k="${key}" data-i="${i}">${G.catBadge(G.cat(e.categoryId), 34)}</button>
+      <div class="item-main"><input class="item-name" data-nk="${key}" data-i="${i}" value="${G.esc(e.name)}"><small>${G.esc(G.cat(e.categoryId).name)}</small></div>
+      <input class="item-amt" data-ak="${key}" data-i="${i}" inputmode="decimal" value="${(e.amount / 100).toFixed(2).replace('.', ',')}"><button class="icon-btn sm" data-rk="${key}" data-i="${i}">${G.icon('x', 16)}</button></div>`).join('') || '<div class="empty small">Nada lido aqui.</div>';
+    const paint = () => {
+      const gross = G.sum(p.earnings, (e) => e.amount), ded = G.sum(p.deductions, (e) => e.amount), net = gross - ded;
+      el.querySelector('#psGross').textContent = G.money(gross, { force: true });
+      el.querySelector('#psDed').textContent = G.money(ded, { force: true });
+      el.querySelector('#psNet').textContent = G.money(net, { force: true });
+      el.querySelector('#psBar').innerHTML = gross ? `<div class="stack-bar">${[...p.deductions.map((e) => [G.cat(e.categoryId).color, e.amount, e.name]), ['var(--income)', net, 'Líquido']].map(([c, v, n]) => `<i title="${G.esc(n)}" style="width:${Math.max(0, v) / gross * 100}%;background:${c}"></i>`).join('')}</div>
+        <p class="muted small">De cada R$ 100 ganhos, R$ ${(ded / gross * 100).toFixed(0)} ficam em descontos.</p>` : '';
+      el.querySelector('#psEarn').innerHTML = lines(p.earnings, 'income', 'earnings');
+      el.querySelector('#psDeds').innerHTML = lines(p.deductions, 'expense', 'deductions');
+      G.$$('[data-k]', el).forEach((b) => (b.onclick = () => { const arr = p[b.dataset.k]; pickCat(b.dataset.k === 'earnings' ? 'income' : 'expense', arr[b.dataset.i].categoryId, (id) => { arr[b.dataset.i].categoryId = id; paint(); }); }));
+      G.$$('[data-nk]', el).forEach((i) => (i.onchange = () => (p[i.dataset.nk][i.dataset.i].name = i.value)));
+      G.$$('[data-ak]', el).forEach((i) => (i.onchange = () => { p[i.dataset.ak][i.dataset.i].amount = G.parseMoney(i.value); paint(); }));
+      G.$$('[data-rk]', el).forEach((b) => (b.onclick = () => { p[b.dataset.rk].splice(Number(b.dataset.i), 1); paint(); }));
+      el.querySelector('#psModeTxt').textContent = mode === 'detail'
+        ? 'Cada vencimento vira uma receita e cada desconto uma despesa (INSS, IR, plano…). O saldo da conta fica igual ao líquido, e as análises mostram quanto o salário perde no caminho.'
+        : 'Um único lançamento com o valor líquido. Os detalhes ficam guardados na observação.';
+    };
+    paint();
+    el.querySelector('#psAcc').appendChild(G.accountChips(accountId, (id) => (accountId = id)));
+    G.$$('#psMode button', el).forEach((b) => (b.onclick = () => { mode = b.dataset.m; G.$$('#psMode button', el).forEach((x) => x.classList.toggle('on', x === b)); paint(); }));
+    el.querySelector('#psSave').onclick = () => {
+      const emp = el.querySelector('#psEmp').value.trim() || 'Salário';
+      const date = el.querySelector('#psDate').value || d.date;
+      const gross = G.sum(p.earnings, (e) => e.amount), ded = G.sum(p.deductions, (e) => e.amount);
+      if (gross - ded <= 0 && mode === 'net') { G.toast('Líquido precisa ser maior que zero', { icon: 'alert' }); return; }
+      const group = G.uid();
+      if (mode === 'net') {
+        const notes = 'Contracheque — ' + p.earnings.map((e) => `${e.name}: ${G.money(e.amount, { force: true })}`).concat(p.deductions.map((e) => `${e.name}: −${G.money(e.amount, { force: true })}`)).join(' · ');
+        G.addTx({ type: 'income', amount: gross - ded, date, desc: emp, categoryId: 'salario', accountId, notes, source: 'scan', payslip: group });
+      } else {
+        p.earnings.forEach((e) => G.addTx({ type: 'income', amount: e.amount, date, desc: `${e.name} · ${emp}`, categoryId: e.categoryId, accountId, source: 'scan', payslip: group }));
+        p.deductions.forEach((e) => G.addTx({ type: 'expense', amount: e.amount, date, desc: `${e.name} (contracheque)`, categoryId: e.categoryId, accountId, source: 'scan', payslip: group }));
+      }
+      G.save(); G.render(); s.close();
+      G.toast(`Contracheque lançado: líquido de ${G.money(gross - ded)}`, { icon: 'sparkles' });
+    };
+  }
+
+  // seletor de categoria compacto, por cima da conferência
+  function pickCat(kind, selected, onPick) {
+    const s = G.sheet(`<h3 class="sheet-title">Categoria</h3><div id="pc"></div>`);
+    s.el.querySelector('#pc').appendChild(G.catGrid(kind, selected, (id) => { onPick(id); s.close(); }));
+  }
+  G.pickCat = pickCat;
+})(window.G);
