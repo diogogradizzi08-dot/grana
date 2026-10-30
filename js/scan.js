@@ -15,7 +15,8 @@
       <div class="scan-types">
         <button data-h="receipt" class="${hint === 'receipt' ? 'on' : ''}"><span>🛒</span><b>Nota de mercado</b><small>cupom, NFC-e</small></button>
         <button data-h="payslip" class="${hint === 'payslip' ? 'on' : ''}"><span>💼</span><b>Contracheque</b><small>holerite</small></button>
-        <button data-h="invoice" class="${hint === 'invoice' ? 'on' : ''}"><span>🧾</span><b>Nota fiscal / conta</b><small>NF-e, boleto, fatura</small></button>
+        <button data-h="bill" class="${hint === 'bill' ? 'on' : ''}"><span>📄</span><b>Boleto</b><small>condomínio, escola, contas</small></button>
+        <button data-h="invoice" class="${hint === 'invoice' ? 'on' : ''}"><span>🧾</span><b>Nota fiscal</b><small>NF-e, DANFE, fatura</small></button>
         <button data-h="auto" class="${hint === 'auto' ? 'on' : ''}"><span>✨</span><b>Descobrir sozinho</b><small>qualquer um</small></button>
       </div>
       <div class="scan-actions">
@@ -24,7 +25,7 @@
       </div>
       <div class="engine-note ${hasKey ? 'ok' : ''}">${hasKey
         ? `${G.icon('sparkles', 18)}<span><b>Leitura com IA ativada.</b> Lê notas amassadas, PDF e contracheques de qualquer empresa.</span>`
-        : `${G.icon('info', 18)}<span><b>Leitor básico (sem IA).</b> Funciona com fotos nítidas de cupom e holerite. Para ler muito melhor — inclusive PDF — ative a IA grátis em <a href="#" id="goKey">Ajustes → Leitura inteligente</a>.</span>`}</div>`, { wide: true });
+        : `${G.icon('info', 18)}<span><b>Leitor básico (sem IA).</b> Funciona com fotos nítidas de cupom, boleto e holerite. Para ler muito melhor — inclusive PDF — ative a IA grátis em <a href="#" id="goKey">Ajustes → Leitura inteligente</a>.</span>`}</div>`, { wide: true });
     let docHint = hint;
     G.$$('.scan-types button', s.el).forEach((b) => (b.onclick = () => { docHint = b.dataset.h; G.$$('.scan-types button', s.el).forEach((x) => x.classList.toggle('on', x === b)); }));
     const go = s.el.querySelector('#goKey'); if (go) go.onclick = (e) => { e.preventDefault(); s.close(); G.go('settings'); setTimeout(() => G.openAiSetup(), 300); };
@@ -89,7 +90,7 @@
     const exp = G.cats('expense').map((c) => c.id + ' = ' + c.name).join('; ');
     const inc = G.cats('income').map((c) => c.id + ' = ' + c.name).join('; ');
     return `Você é um assistente de finanças pessoais no Brasil. Leia o documento (foto ou PDF) e devolva SOMENTE um JSON válido.
-Tipo provável indicado pelo usuário: ${hint} (receipt = cupom/nota de mercado, payslip = contracheque/holerite, invoice = nota fiscal/boleto/conta/fatura, auto = descubra).
+Tipo provável indicado pelo usuário: ${hint} (receipt = cupom/nota de mercado, payslip = contracheque/holerite, bill = boleto bancário ou de concessionária, invoice = nota fiscal/fatura, auto = descubra).
 
 Categorias de DESPESA (use o id): ${exp}
 Categorias de RECEITA (use o id): ${inc}
@@ -104,6 +105,7 @@ Formato:
  "paymentMethod": "dinheiro" | "debito" | "credito" | "pix" | "boleto" | null,
  "items": [ { "name": "nome legível do produto/serviço, sem códigos, por extenso (ex.: 'Detergente Ypê 500ml')", "qty": número, "amount": valor total do item em reais já com desconto do item, "category": "id da categoria" } ],
  "discount": desconto geral da nota em reais (0 se não houver),
+ "barcode": "boleto: a linha digitável completa, só os dígitos (47 ou 48), ou null",
  "payslip": null ou { "employer": "empresa", "reference": "mês de referência AAAA-MM", "gross": total de vencimentos, "net": valor líquido,
     "earnings": [ { "name": "Salário base / Horas extras / Adicional noturno / Férias / 13º...", "amount": n, "category": "id de RECEITA" } ],
     "deductions": [ { "name": "INSS / IRRF / Vale-transporte / Plano de saúde...", "amount": n, "category": "id de DESPESA" } ] }
@@ -114,6 +116,7 @@ Regras:
 - A soma dos items menos "discount" deve bater com "total".
 - Contracheque: docType "payslip", kind "income", total = líquido. INSS, IRRF e contribuições = impostos; plano de saúde/odontológico = saude; vale-transporte = transporte; vale-refeição/alimentação descontado = restaurante; pensão alimentícia = filhos; empréstimo consignado = dividas; adiantamento salarial = outros. Em "items" repita as linhas de earnings.
 - Conta de luz/água/internet/telefone = contas; boleto de condomínio/aluguel = moradia.
+- BOLETO (docType "bill"): "merchant" = o BENEFICIÁRIO/CEDENTE (quem recebe: ex. 'Condomínio Edifício Aurora', 'Colégio X'), NUNCA o banco emissor (Itaú, Bradesco, Caixa…) e NUNCA o pagador/sacado (que é o próprio usuário). "date" = data de VENCIMENTO. "total" = "Valor do documento" (ou "Valor cobrado", se preenchido). Ignore os campos de desconto, juros, multa e acréscimos que estejam em branco ou zerados — são campos do formulário, não itens. Se o boleto tiver demonstrativo/composição (ex. condomínio: taxa condominial, fundo de reserva, água, gás, rateio de obra), liste cada linha em "items" (taxa condominial/fundo de reserva/obra = moradia; água/gás/luz = contas); senão, "items" tem UMA linha com a descrição do que se paga (ex. 'Condomínio outubro/2026') e o total.
 - Se um campo não existir, use null. Não invente itens.`;
   }
 
@@ -184,6 +187,8 @@ Regras:
     const date = dm ? (dm[3].length === 2 ? '20' + dm[3] : dm[3]) + '-' + dm[2] + '-' + dm[1] : G.today();
     const merchant = (lines.find((l) => /[A-Za-z]{3}/.test(l) && !/cnpj|cpf|ie:|endere|rua |av\.|documento/i.test(l)) || '').slice(0, 40);
     if (isPayslip) return parsePayslipText(lines, date, merchant);
+    const isBill = hint === 'bill' || (hint !== 'receipt' && (/linha digitavel|beneficiario|cedente|nosso numero|ficha de compensacao|recibo do pagador|sacado/.test(all) || !!findBarcode(text)));
+    if (isBill) return parseBillText(text, lines);
 
     let total = 0;
     const items = [];
@@ -203,6 +208,76 @@ Regras:
     if (!items.length && total) items.push({ name: merchant || 'Compra', qty: 1, amount: total, category: kind || 'outros' });
     if (kind && items.length > 0) items.forEach((i) => (i.category = G.guessCategory(i.name) || kind));
     return { docType: hint === 'invoice' ? 'invoice' : 'receipt', kind: 'expense', merchant, date, total, items, discount: 0, engine: 'local' };
+  }
+
+  // ---------- boleto ----------
+  // A linha digitável carrega o valor (e, no boleto bancário, o vencimento) e tem dígitos
+  // verificadores: quando eles conferem, o número é exato — melhor que qualquer leitura de rótulo.
+  function findBarcode(text) {
+    const cands = (text.match(/\d[\d .\-]{38,70}\d/g) || []).map((x) => x.replace(/\D/g, ''));
+    // linha digitável quebrada em duas: tenta também a junção de linhas vizinhas
+    const ls = text.split(/\n/).map((l) => l.replace(/\D/g, ''));
+    for (let i = 0; i < ls.length - 1; i++) if (ls[i].length >= 20) cands.push(ls[i] + ls[i + 1]);
+    for (const c of cands) { const d = decodeBarcode(c); if (d) return d; }
+    return null;
+  }
+  const mod10 = (num) => { let sum = 0, w = 2; for (let i = num.length - 1; i >= 0; i--) { let p = Number(num[i]) * w; if (p > 9) p = Math.floor(p / 10) + (p % 10); sum += p; w = w === 2 ? 1 : 2; } return (10 - (sum % 10)) % 10; };
+  const mod11Bank = (num) => { let sum = 0, w = 2; for (let i = num.length - 1; i >= 0; i--) { sum += Number(num[i]) * w; w = w === 9 ? 2 : w + 1; } const r = 11 - (sum % 11); return r === 0 || r === 10 || r === 11 ? 1 : r; };
+  const mod11Conv = (num) => { let sum = 0, w = 2; for (let i = num.length - 1; i >= 0; i--) { sum += Number(num[i]) * w; w = w === 9 ? 2 : w + 1; } const r = sum % 11; return r === 0 || r === 1 ? 0 : 11 - r; };
+  function decodeBarcode(d) {
+    if (d.length === 47) {
+      // bancário: AAABC.CCCCX DDDDD.DDDDDY EEEEE.EEEEEZ K UUUUVVVVVVVVVV
+      const bar = d.slice(0, 4) + d[32] + d.slice(33, 47) + d.slice(4, 9) + d.slice(10, 20) + d.slice(21, 31);
+      if (mod11Bank(bar.slice(0, 4) + bar.slice(5)) !== Number(bar[4])) return null;
+      const fator = Number(d.slice(33, 37)), value = Number(d.slice(37, 47));
+      let due = null;
+      if (fator >= 1000) {
+        // o fator recomeçou em 1000 em 22/02/2025; fica a data mais perto de hoje
+        const a = G.addDays('1997-10-07', fator), b = G.addDays('2025-02-22', fator - 1000);
+        const dist = (x) => Math.abs(G.parseDate(x) - new Date());
+        due = dist(a) < dist(b) ? a : b;
+      }
+      return { kind: 'bank', value, due };
+    }
+    if (d.length === 48 && d[0] === '8') {
+      const blocks = [0, 1, 2, 3].map((i) => d.slice(i * 12, i * 12 + 12));
+      const ref = d[2];
+      const check = ref === '6' || ref === '7' ? mod10 : mod11Conv;
+      if (!blocks.every((b) => check(b.slice(0, 11)) === Number(b[11]))) return null;
+      const bar = blocks.map((b) => b.slice(0, 11)).join('');
+      const value = ref === '6' || ref === '8' ? Number(bar.slice(4, 15)) : 0;
+      const segment = { 1: 'impostos', 2: 'contas', 3: 'contas', 4: 'contas', 5: 'impostos', 7: 'tarifas' }[bar[1]] || null;
+      return { kind: 'convenio', value, due: null, segment };
+    }
+    return null;
+  }
+  G._decodeBarcode = decodeBarcode;
+
+  function parseBillText(text, lines) {
+    const n = lines.map((l) => G.norm(l));
+    const moneyIn = (l) => { const m = l.match(/\d{1,3}(?:\.\d{3})*,\d{2}/g); return m ? G.parseMoney(m[m.length - 1]) : 0; };
+    const dateIn = (l) => { const m = l.match(/(\d{2})\/(\d{2})\/(\d{4})/); return m ? m[3] + '-' + m[2] + '-' + m[1] : null; };
+    // o valor pode estar na mesma linha do rótulo ou logo abaixo (formulário de boleto)
+    const near = (re, get) => { for (let i = 0; i < n.length; i++) if (re.test(n[i])) for (let j = i; j <= Math.min(i + 2, n.length - 1); j++) { const v = get(lines[j]); if (v) return v; } return 0; };
+    let value = near(/valor cobrado/, moneyIn) || near(/valor do documento|valor documento|valor a pagar|total a pagar|valor total/, moneyIn);
+    let due = near(/vencimento/, dateIn) || null;
+    const code = findBarcode(text);
+    if (code && code.value) value = code.value;
+    if (code && code.due) due = code.due;
+    // beneficiário: o resto da linha do rótulo ou a linha de baixo — sem CNPJ, agência, endereço
+    let merchant = '';
+    for (let i = 0; i < n.length && !merchant; i++) {
+      if (!/beneficiario|cedente/.test(n[i]) || /pagador|sacado/.test(n[i])) continue;
+      const after = lines[i].split(/benefici[aá]rio|cedente/i)[1] || '';
+      const cands = [after.replace(/^[^A-Za-zÀ-ú]*/, ''), lines[i + 1] || '', lines[i + 2] || ''];
+      merchant = cands.map((c) => c.replace(/(cnpj|cpf)[:\s].*$/i, '').replace(/\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}.*$/, '').replace(/ag[eê]ncia.*$/i, '').trim())
+        .find((c) => /[A-Za-zÀ-ú]{3}/.test(c) && !/c[oó]digo|ag[eê]ncia|endere|nosso|cnpj|cpf|^sacador/i.test(c)) || '';
+    }
+    merchant = merchant.replace(/\s+/g, ' ').slice(0, 50);
+    const cat = G.guessCategory(merchant) || (code && code.segment) || 'outros';
+    const ref = text.match(/(?:ref(?:er[eê]ncia)?|compet[eê]ncia)[:\s]*(\d{2})\/(\d{4})/i) || [];
+    const label = merchant ? merchant + (ref[1] ? ` ${G.MONTHS[Number(ref[1]) - 1]}/${ref[2]}` : '') : 'Boleto';
+    return { docType: 'bill', kind: 'expense', merchant: merchant || 'Boleto', date: due || G.today(), total: value / 100, items: value ? [{ name: label, qty: 1, amount: value / 100, category: cat }] : [], barcodeChecked: !!(code && code.value), engine: 'local' };
   }
 
   function parsePayslipText(lines, date, merchant) {
@@ -248,7 +323,7 @@ Regras:
       return g && ok.has(g) ? g : (k === 'income' ? 'outras_receitas' : 'outros');
     };
     const cents = (v) => Math.round((Number(v) || 0) * 100);
-    const date = /^\d{4}-\d{2}-\d{2}$/.test(r.date || '') && r.date <= G.addDays(G.today(), 40) && r.date >= '2000-01-01' ? r.date : G.today();
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(r.date || '') && r.date <= G.addDays(G.today(), r.docType === 'bill' ? 370 : 40) && r.date >= '2000-01-01' ? r.date : G.today();
     const out = {
       docType: r.docType || 'other', kind, date, engine: r.engine || 'ia',
       merchant: (r.merchant || '').trim() || (kind === 'income' ? 'Salário' : 'Compra'),
@@ -267,6 +342,21 @@ Regras:
       out.payslip.net = cents(p.net) || out.payslip.gross - G.sum(out.payslip.deductions, (e) => e.amount);
       out.total = out.payslip.net;
     }
+    // "CONDOMINIO EDIFICIO AURORA" → "Condominio Edificio Aurora"
+    const SMALL = ['de', 'da', 'do', 'das', 'dos', 'e'], KEEP = ['LTDA', 'S/A', 'ME', 'EIRELI', 'SA'];
+    const tidy = (x) => (x || '').split(' ').map((w, i) => (/^[A-ZÀ-Ú][A-ZÀ-Ú.\/]+$/.test(w) && !KEEP.includes(w)
+      ? (i && SMALL.includes(w.toLowerCase()) ? w.toLowerCase() : w.charAt(0) + w.slice(1).toLowerCase()) : w)).join(' ');
+    out.merchant = tidy(out.merchant);
+    if (out.docType === 'bill') out.items.forEach((i) => (i.name = tidy(i.name)));
+    if (r.barcode) {
+      const code = decodeBarcode(String(r.barcode).replace(/\D/g, ''));
+      if (code && code.value) {
+        if (out.items.length === 1) out.items[0].amount = code.value;
+        out.total = code.value; out.barcodeChecked = true;
+      }
+      if (code && code.due) out.date = code.due;
+    }
+    if (r.barcodeChecked) out.barcodeChecked = true;
     if (!out.items.length && out.total && !out.payslip) out.items.push({ name: out.merchant, qty: 1, amount: out.total, categoryId: fixCat(null, kind, out.merchant) });
     if (!out.total) out.total = G.sum(out.items, (i) => i.amount) - out.discount;
     return out;
@@ -284,7 +374,8 @@ Regras:
         <div class="review-meta">
           <span class="pill ${d.engine === 'local' ? '' : 'ai'}">${d.engine === 'local' ? 'leitor básico' : G.icon('sparkles', 12) + ' lido pela IA'}</span>
           <input id="rvMerchant" class="desc-input" value="${G.esc(d.merchant)}">
-          <div class="review-line"><label class="chip">${G.icon('calendar', 16)}<input type="date" id="rvDate" value="${d.date}"></label><b class="review-total" id="rvTotal"></b></div>
+          <div class="review-line"><label class="chip">${G.icon('calendar', 16)}${d.docType === 'bill' ? '<small>vence</small>' : ''}<input type="date" id="rvDate" value="${d.date}"></label><b class="review-total" id="rvTotal"></b></div>
+          ${d.barcodeChecked ? `<span class="pill ok">${G.icon('check', 12)} valor conferido pelo código de barras</span>` : ''}
         </div>
       </div>
       <div id="rvWarn"></div>
@@ -292,7 +383,9 @@ Regras:
       <div class="sec-label">Itens <span class="muted">— toque na categoria para trocar</span></div>
       <div class="card flush" id="rvItems"></div>
       <button class="more-toggle" id="rvAdd">${G.icon('plus', 18)} Adicionar item</button>
-      <div class="sec-label">Pago com</div><div id="rvAcc"></div>
+      <div class="sec-label">${d.docType === 'bill' ? 'Pagar com' : 'Pago com'}</div><div id="rvAcc"></div>
+      ${d.docType === 'bill' ? `<p class="muted small">O lançamento fica na data do vencimento: até lá ele aparece na lista, mas não mexe no saldo de hoje.</p>
+        <label class="check"><input type="checkbox" id="rvRec"> Chega todo mês (condomínio, escola…) — criar conta fixa</label>` : ''}
       <div class="sec-label">Como lançar</div>
       <div class="seg wide" id="rvMode"><button data-m="split" class="on">1 lançamento dividido</button><button data-m="each">1 por categoria</button></div>
       <div class="add-foot"><button class="btn primary big" id="rvSave">Salvar</button></div>`, { wide: true, full: true });
@@ -351,8 +444,17 @@ Regras:
           if (amt > 0) G.addTx({ type: d.kind, amount: amt, date, desc: `${merchant} · ${G.cat(c).name}`, categoryId: c, accountId, items: groups[c], source: 'scan' });
         }
       }
+      const rec = el.querySelector('#rvRec');
+      if (rec && rec.checked) {
+        // o próximo boleto aparece no Início para confirmar; o valor pode ser ajustado na hora
+        const main = cats.sort((a, b) => G.sum(groups[b], (i) => i.amount) - G.sum(groups[a], (i) => i.amount))[0];
+        const last = G.state.tx[G.state.tx.length - 1];
+        const r = { id: G.uid(), type: 'expense', amount: total, desc: merchant, categoryId: main, accountId, freq: 'monthly', day: Number(date.slice(8, 10)), start: date, done: { [date]: last.id } };
+        G.state.recurring.push(r); last.recurringId = r.id;
+      }
       G.state.settings.lastAccount = accountId;
       G.save(); G.render(); s.close();
+      if (d.docType === 'bill') { G.toast(`Boleto de ${G.money(total)} lançado para ${G.shortDate(date)}`, { icon: 'sparkles' }); return; }
       G.toast(`Nota de ${G.money(total)} lançada em ${cats.length} categoria(s)`, { icon: 'sparkles' });
     };
   }

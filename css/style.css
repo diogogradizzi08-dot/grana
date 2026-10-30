@@ -435,3 +435,11 @@ b, strong { font-weight: 700; }
   .month-label { min-width: 74px; padding: 0 2px; }
   .hero-value { font-size: 32px; }
 }
+
+/* boleto: cinco tipos de documento */
+.pill.ok { background: color-mix(in srgb, var(--income) 15%, transparent); color: var(--income); }
+.scan-types button[data-h="auto"] { grid-column: 1 / -1; flex-direction: row; justify-content: center; gap: 10px; padding: 12px; }
+.scan-types button[data-h="auto"] span { font-size: 22px; margin: 0; }
+@media (min-width: 640px) { .scan-types { grid-template-columns: repeat(5, 1fr); } .scan-types button[data-h="auto"] { grid-column: auto; flex-direction: column; gap: 2px; } }
+.review-line { flex-wrap: wrap; row-gap: 6px; }
+.review-meta .chip small { color: var(--muted); font-weight: 700; }
