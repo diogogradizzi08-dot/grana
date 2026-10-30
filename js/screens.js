@@ -88,7 +88,16 @@
 
   // ======================= FLUXO DE CAIXA (próximos dias) =======================
   const PERIODS = [7, 15, 30, 60, 90];
-  const KIND_LABEL = { late: 'atrasado', pending: 'a pagar', scheduled: 'agendado', recurring: 'conta fixa', invoice: 'fatura fechada', 'invoice-open': 'fatura aberta — ainda pode subir' };
+  // a situação vem escrita na linha; o botão é só a AÇÃO (Pagar/Receber), nunca um status
+  const KIND_LABEL = { scheduled: 'agendado', invoice: 'fatura fechada · a pagar', 'invoice-open': 'fatura aberta — ainda pode subir' };
+  const kindLabel = (x) => {
+    const st = x.value > 0 ? 'a receber' : 'a pagar';
+    if (x.kind === 'late') return `<b class="neg">atrasado</b> · venceu ${G.shortDate(x.origDate)}`;
+    const when = G.shortDate(x.date);
+    if (x.kind === 'pending') return `<b>${st}</b> · ${when}`;
+    if (x.kind === 'recurring') return `<b>${st}</b> · ${when} · fixa`;
+    return `${when} · ${KIND_LABEL[x.kind] || st}`;
+  };
   G.forecastCard = (fc, { full = false } = {}) => {
     const late = fc.items.filter((x) => x.kind === 'late');
     const list = full ? fc.items : fc.items.slice(0, 6);
@@ -106,9 +115,9 @@
       ${neg ? `<div class="warn-box">${G.icon('alert', 18)}<span>O saldo fica negativo em <b>${G.shortDate(fc.min.date)}</b> (chega a ${G.money(fc.min.value)}). Antecipe uma receita, adie um pagamento ou separe dinheiro antes dessa data.</span></div>` : ''}
       ${fc.items.length ? `<div class="fc-list">${list.map((x, i) => `<div class="fc-row ${x.kind}">
         ${x.account ? G.accBadge(x.account, 34) : G.catBadge(x.type === 'transfer' ? { icon: '⇄', color: '#2F6FE4' } : G.cat(x.categoryId), 34)}
-        <div class="tx-main"><div class="tx-title">${G.esc(x.desc)}</div><div class="tx-sub">${x.kind === 'late' ? `<b class="neg">venceu ${G.shortDate(x.origDate)}</b>` : G.shortDate(x.date)} · ${KIND_LABEL[x.kind]}</div></div>
+        <div class="tx-main"><div class="tx-title">${G.esc(x.desc)}</div><div class="tx-sub">${kindLabel(x)}</div></div>
         <div class="fc-right"><b class="${x.value > 0 ? 'pos' : ''}">${x.value > 0 ? '+' : '−'}${G.money(x.value, { abs: true })}</b>
-        ${x.kind === 'scheduled' ? '' : `<button class="btn sm ${x.kind === 'late' ? 'primary' : 'ghost'}" data-fc="${fc.items.indexOf(x)}">${x.invoiceKey ? 'Pagar' : x.value > 0 ? 'Recebi' : 'Paguei'}</button>`}</div></div>`).join('')}</div>
+        ${x.kind === 'scheduled' ? '' : `<button class="btn sm ${x.kind === 'late' ? 'primary' : 'ghost'}" data-fc="${fc.items.indexOf(x)}">${x.value > 0 ? 'Receber' : 'Pagar'}</button>`}</div></div>`).join('')}</div>
         ${!full && fc.items.length > list.length ? `<button class="more-toggle" id="fcAll">Ver os ${fc.items.length} lançamentos previstos ${G.icon('right', 16)}</button>` : ''}`
       : `<div class="empty small">${G.icon('calendar', 28)}<p>Nada previsto. Cadastre contas fixas, lance boletos com vencimento ou marque despesas como "a pagar" para ver o seu fluxo de caixa.</p></div>`}
     </section>`;
@@ -137,11 +146,11 @@
   // confirmar conta fixa: valor pode ter mudado (a conta de luz nunca vem igual)
   G.confirmRecurringFlow = (p) => {
     const inc = p.r.type === 'income', today = G.today();
-    const s = G.sheet(`<h3 class="sheet-title">${G.esc(p.r.desc)}</h3><p class="muted">Vencimento ${G.dateLabel(p.date).toLowerCase()} · ${G.esc(G.cat(p.r.categoryId).name)}</p>
+    const s = G.sheet(`<h3 class="sheet-title">${inc ? 'Registrar recebimento' : 'Registrar pagamento'} · ${G.esc(p.r.desc)}</h3><p class="muted">Vencimento ${G.dateLabel(p.date).toLowerCase()} · ${G.esc(G.cat(p.r.categoryId).name)}</p>
       <div class="two"><label class="field"><span>Valor ${inc ? 'recebido' : 'pago'}</span><input id="rv" inputmode="decimal" value="${(p.r.amount / 100).toFixed(2).replace('.', ',')}"></label>
       <label class="field"><span>${inc ? 'Recebido em' : 'Pago em'}</span><input id="rd" type="date" value="${p.date < today ? p.date : today}" max="${today}"></label></div>
       <label class="check"><input type="checkbox" id="rvAll"> Usar este valor nos próximos meses</label>
-      <div class="row-btns"><button class="btn ghost" data-close>Cancelar</button><button class="btn primary" id="rvOk">Confirmar</button></div>`);
+      <div class="row-btns"><button class="btn ghost" data-close>Cancelar</button><button class="btn primary" id="rvOk">${inc ? 'Marcar como recebido' : 'Marcar como pago'}</button></div>`);
     s.el.querySelector('#rvOk').onclick = () => {
       const v = G.parseMoney(s.el.querySelector('#rv').value);
       if (!v) return;

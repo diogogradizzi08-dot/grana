@@ -451,7 +451,7 @@ b, strong { font-weight: 700; }
 .pill.late { background: color-mix(in srgb, var(--expense) 15%, transparent); color: var(--expense); }
 .pay-banner { background: color-mix(in srgb, var(--warn) 13%, var(--surface)); border: 1.5px solid color-mix(in srgb, var(--warn) 35%, transparent); border-radius: 16px; padding: 12px 14px; margin-bottom: 14px; display: flex; flex-direction: column; gap: 10px; }
 .pay-banner > div:first-child { display: flex; align-items: center; gap: 8px; font-size: 14px; }
-.pay-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.pay-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .pay-actions .btn { position: relative; }
 .pay-actions input[type="date"] { position: absolute; inset: 0; opacity: 0; width: 100%; padding: 0; cursor: pointer; }
 .rec-box { display: flex; align-items: center; gap: 10px; padding: 12px; border-radius: 14px; background: var(--surface2); font-size: 14px; }

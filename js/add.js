@@ -10,8 +10,8 @@
     const today = G.today(), inc = t.type === 'income';
     const when = t.date < today ? `<b class="neg">atrasado há ${G.daysBetween(t.date, today)} dia(s)</b>` : t.date === today ? '<b>vence hoje</b>' : `vence em ${G.daysBetween(today, t.date)} dia(s)`;
     return `<div class="pay-banner"><div>${G.icon('calendar', 18)}<span><b>${inc ? 'A receber' : 'A pagar'}</b> · ${G.shortDate(t.date)} · ${when}</span></div>
-      <div class="pay-actions"><button class="btn sm primary" data-pay="today">${inc ? 'Recebi hoje' : 'Paguei hoje'}</button>
-      <label class="btn sm ghost">${G.icon('calendar', 15)} Em outra data<input type="date" data-pay="other" max="${today}"></label></div></div>`;
+      <div class="pay-actions"><span class="muted small">${inc ? 'Marcar como recebido:' : 'Marcar como pago:'}</span><button class="btn sm primary" data-pay="today">Hoje</button>
+      <label class="btn sm ghost">${G.icon('calendar', 15)} Outra data<input type="date" data-pay="other" max="${today}"></label></div></div>`;
   }
   G.payBanner = payBanner;
   G.bindPayBanner = (root, t, sheet) => {
