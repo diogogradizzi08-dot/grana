@@ -412,11 +412,15 @@
         <div class="field"><span>Tema</span><div class="seg wide" id="th">${[['auto', 'Automático'], ['light', 'Claro'], ['dark', 'Escuro']].map(([k, l]) => `<button data-t="${k}" class="${st.theme === k ? 'on' : ''}">${l}</button>`).join('')}</div></div>
         <label class="check"><input type="checkbox" id="hv" ${st.hideValues ? 'checked' : ''}> Esconder valores ao abrir (privacidade em público)</label></section>
 
+      <section class="card"><div class="card-head"><h2>${G.icon('repeat', 18)} Atualização</h2><span class="pill">versão ${G.VERSION}</span></div>
+        <p class="muted small">O app procura versões novas sozinho quando você o abre com internet e mostra um aviso para atualizar. Seus lançamentos não são apagados ao atualizar.</p>
+        <button class="btn ghost wide-btn" id="upd">${G.icon('repeat', 18)} Procurar atualização</button></section>
       <section class="card"><div class="card-head"><h2>Zona de perigo</h2></div>
         <button class="btn ghost danger-text wide-btn" id="demo">Carregar dados de exemplo</button>
         <button class="btn ghost danger-text wide-btn" id="wipe">${G.icon('trash', 18)} Apagar todos os dados</button></section>
       <p class="muted small center">Grana · versão ${G.VERSION}</p></div>`;
     root.querySelector('#ai').onclick = () => G.openAiSetup();
+    root.querySelector('#upd').onclick = () => G.checkUpdate({ manual: true });
     root.querySelector('#bk').onclick = doBackup;
     root.querySelector('#rs').onchange = async (e) => {
       const f = e.target.files[0]; if (!f) return;

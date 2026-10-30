@@ -484,3 +484,10 @@ b, strong { font-weight: 700; }
 .fc-flow { grid-template-columns: 1fr 1fr; row-gap: 12px; }
 .fc-flow b { font-size: 16px; }
 @media (min-width: 640px) { .forecast.flat .fc-flow { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+
+/* aviso de versão nova */
+.update-bar { position: fixed; z-index: 85; left: 12px; right: 12px; top: calc(env(safe-area-inset-top, 0px) + 10px); display: flex; align-items: center; gap: 10px;
+  background: var(--surface); border: 1px solid var(--brand); border-radius: 16px; padding: 10px 10px 10px 14px; box-shadow: var(--shadow-lg); color: var(--brand); }
+.update-bar > div { flex: 1; min-width: 0; display: flex; flex-direction: column; color: var(--text); }
+.update-bar small { color: var(--muted); font-size: 12px; }
+@media (min-width: 900px) { .update-bar { left: calc(232px + 24px); right: auto; width: 460px; } }

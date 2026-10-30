@@ -1,6 +1,6 @@
 /* Grana — casca do app: navegação, tema, primeira abertura e dados de exemplo. */
 (function (G) {
-  G.VERSION = '1.0.0';
+  G.VERSION = '1.1.0'; // ao publicar: igual ao version.json e suba o VERSION do sw.js
   G.screens = G.screens || {};
   const TABS = [['home', 'home', 'Início'], ['tx', 'list', 'Lançamentos'], ['insights', 'pie', 'Análises'], ['more', 'grid', 'Mais']];
   const MORE_ROUTES = ['accounts', 'budgets', 'goals', 'recurring', 'categories', 'import', 'settings'];
@@ -122,6 +122,37 @@
     G.save();
   };
 
+  // ===== atualização: compara a versão instalada com a publicada (version.json) =====
+  G.checkUpdate = async ({ manual = false } = {}) => {
+    if (!navigator.onLine) { if (manual) G.toast('Sem internet agora — tente de novo conectado', { icon: 'alert' }); return false; }
+    try {
+      const res = await fetch('version.json?t=' + Date.now(), { cache: 'no-store' });
+      const info = await res.json();
+      if (info.version && info.version !== G.VERSION) { showUpdateBar(info); return true; }
+      if (manual) G.toast(`Você já está na versão mais nova (${G.VERSION})`);
+    } catch (e) { if (manual) G.toast('Não consegui verificar agora', { icon: 'alert' }); }
+    return false;
+  };
+  function showUpdateBar(info) {
+    if (G.$('.update-bar')) return;
+    const bar = G.h(`<div class="update-bar">${G.icon('sparkles', 18)}<div><b>Versão nova disponível (${G.esc(info.version)})</b>${info.notes ? `<small>${G.esc(info.notes)}</small>` : ''}</div>
+      <button class="btn sm primary" data-up>Atualizar</button><button class="icon-btn sm" data-later title="Depois">${G.icon('x', 16)}</button></div>`);
+    document.body.appendChild(bar);
+    bar.querySelector('[data-later]').onclick = () => bar.remove();
+    bar.querySelector('[data-up]').onclick = () => G.applyUpdate();
+  }
+  // os dados ficam no aparelho (IndexedDB) e não são tocados: só os arquivos do app são trocados
+  G.applyUpdate = async () => {
+    G.toast('Atualizando…', { icon: 'repeat' });
+    try {
+      await G.flushSave?.();
+      const reg = navigator.serviceWorker && (await navigator.serviceWorker.getRegistration());
+      if (reg) await reg.update();
+      if (window.caches) { const ks = await caches.keys(); await Promise.all(ks.map((k) => caches.delete(k))); }
+    } catch (e) { /* recarregar mesmo assim */ }
+    location.reload();
+  };
+
   async function init() {
     await G.loadState();
     G.applyTheme();
@@ -139,6 +170,9 @@
     const p = new URLSearchParams(location.search);
     if (p.get('a') === 'scan') setTimeout(() => G.openScan(), 400);
     else if (p.get('a') === 'expense') setTimeout(() => G.openAdd({ type: 'expense' }), 400);
+    // procura versão nova ao abrir e sempre que o app volta para a tela
+    setTimeout(() => G.checkUpdate(), 1500);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') G.checkUpdate(); });
   }
   document.addEventListener('DOMContentLoaded', init);
 })(window.G);

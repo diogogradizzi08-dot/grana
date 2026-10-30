@@ -64,6 +64,8 @@
   const listeners = [];
   G.onChange = (fn) => listeners.push(fn);
   G.save = () => { flush(); listeners.forEach((fn) => fn()); };
+  // grava já, sem esperar (antes de recarregar o app para atualizar)
+  G.flushSave = () => (db ? idbSet(KEY, G.state) : Promise.resolve());
 
   // ---------- desfazer: guarda uma cópia antes de mudanças destrutivas ----------
   let undoSnap = null;
