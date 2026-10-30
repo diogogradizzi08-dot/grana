@@ -1,6 +1,6 @@
 /* Grana — funciona sem internet: guarda os arquivos do app no aparelho.
    Ao publicar uma versão nova, aumente VERSION para os aparelhos atualizarem. */
-const VERSION = 'grana-v6';
+const VERSION = 'grana-v7';
 const FILES = [
   './', './index.html', './manifest.webmanifest', './css/style.css',
   './js/util.js', './js/icons.js', './js/catalog.js', './js/store.js', './js/finance.js', './js/charts.js',

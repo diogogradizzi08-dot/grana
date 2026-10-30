@@ -113,7 +113,7 @@
       </div>
       ${fc.items.length ? G.balanceLine(fc.series, { width: full ? Math.min(G.chartWidth(), 900) : G.chartWidth(window.innerWidth >= 760) }) : ''}
       ${neg ? `<div class="warn-box">${G.icon('alert', 18)}<span>O saldo fica negativo em <b>${G.shortDate(fc.min.date)}</b> (chega a ${G.money(fc.min.value)}). Antecipe uma receita, adie um pagamento ou separe dinheiro antes dessa data.</span></div>` : ''}
-      ${fc.items.length ? `<div class="fc-list">${list.map((x, i) => `<div class="fc-row ${x.kind}">
+      ${fc.items.length ? `<div class="fc-list">${list.map((x, i) => `<div class="fc-row ${x.kind}" data-fcrow="${fc.items.indexOf(x)}">
         ${x.account ? G.accBadge(x.account, 34) : G.catBadge(x.type === 'transfer' ? { icon: '⇄', color: '#2F6FE4' } : G.cat(x.categoryId), 34)}
         <div class="tx-main"><div class="tx-title">${G.esc(x.desc)}</div><div class="tx-sub">${kindLabel(x)}</div></div>
         <div class="fc-right"><b class="${x.value > 0 ? 'pos' : ''}">${x.value > 0 ? '+' : '−'}${G.money(x.value, { abs: true })}</b>
@@ -126,6 +126,15 @@
     G.$$('[data-fd]', root).forEach((b) => (b.onclick = () => {
       G.state.settings.forecastDays = Number(b.dataset.fd); G.save();
       if (sheet) { sheet.close(); G.render(); G.openForecast(); } else G.render();
+    }));
+    // tocar na linha abre para editar/apagar; o botão Pagar/Receber registra o pagamento
+    G.$$('[data-fcrow]', root).forEach((row) => (row.onclick = (e) => {
+      if (e.target.closest('[data-fc]')) return;
+      const x = fc.items[row.dataset.fcrow];
+      if (sheet) sheet.close();
+      if (x.tx) G.openAdd({ edit: x.tx });
+      else if (x.rec) G.editRecurring(G.state.recurring.find((r) => r.id === x.rec.id) || x.rec);
+      else if (x.invoiceKey) G.openInvoice(x.account.id, x.invoiceKey);
     }));
     G.$$('[data-fc]', root).forEach((b) => (b.onclick = () => {
       const x = fc.items[b.dataset.fc];

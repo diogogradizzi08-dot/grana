@@ -11,27 +11,25 @@
     const hasKey = !!G.state.settings.geminiKey;
     const s = G.sheet(`
       <div class="add-head"><button class="icon-btn" data-close>${G.icon('x')}</button><h3 class="sheet-title" style="margin:0">Ler documento</h3><span style="width:40px"></span></div>
-      <p class="muted center">Fotografe ou envie o arquivo. O app lê, separa os itens e classifica — você só confere.</p>
-      <div class="scan-types">
-        <button data-h="receipt" class="${hint === 'receipt' ? 'on' : ''}"><span>🛒</span><b>Nota de mercado</b><small>cupom, NFC-e</small></button>
-        <button data-h="payslip" class="${hint === 'payslip' ? 'on' : ''}"><span>💼</span><b>Contracheque</b><small>holerite</small></button>
-        <button data-h="bill" class="${hint === 'bill' ? 'on' : ''}"><span>📄</span><b>Boleto</b><small>condomínio, escola, contas</small></button>
-        <button data-h="invoice" class="${hint === 'invoice' ? 'on' : ''}"><span>🧾</span><b>Nota fiscal</b><small>NF-e, DANFE, fatura</small></button>
-        <button data-h="auto" class="${hint === 'auto' ? 'on' : ''}"><span>✨</span><b>Descobrir sozinho</b><small>qualquer um</small></button>
-      </div>
+      <p class="muted center">Fotografe ou envie o arquivo. O app descobre o que é, separa os itens e classifica — você só confere.</p>
       <div class="scan-actions">
         <label class="btn primary big">${G.icon('camera', 20)} Tirar foto<input type="file" accept="image/*" capture="environment" hidden id="camIn"></label>
         <label class="btn ghost big">${G.icon('upload', 20)} Escolher arquivo<input type="file" accept="image/*,application/pdf" hidden id="fileIn"></label>
       </div>
+      <div class="sec-label scan-or">Ou toque no tipo para fotografar já</div>
+      <div class="scan-types">
+        ${[['receipt', '🛒', 'Nota de mercado', 'cupom, NFC-e'], ['payslip', '💼', 'Contracheque', 'holerite'], ['bill', '📄', 'Boleto', 'condomínio, escola, contas'], ['invoice', '🧾', 'Nota fiscal', 'NF-e, DANFE, fatura']]
+          .map(([h, e, t, sub]) => `<label data-h="${h}"><span>${e}</span><b>${t}</b><small>${sub}</small><input type="file" accept="image/*" capture="environment" hidden></label>`).join('')}
+      </div>
       <div class="engine-note ${hasKey ? 'ok' : ''}">${hasKey
         ? `${G.icon('sparkles', 18)}<span><b>Leitura com IA ativada.</b> Lê notas amassadas, PDF e contracheques de qualquer empresa.</span>`
         : `${G.icon('info', 18)}<span><b>Leitor básico (sem IA).</b> Funciona com fotos nítidas de cupom, boleto e holerite. Para ler muito melhor — inclusive PDF — ative a IA grátis em <a href="#" id="goKey">Ajustes → Leitura inteligente</a>.</span>`}</div>`, { wide: true });
-    let docHint = hint;
-    G.$$('.scan-types button', s.el).forEach((b) => (b.onclick = () => { docHint = b.dataset.h; G.$$('.scan-types button', s.el).forEach((x) => x.classList.toggle('on', x === b)); }));
     const go = s.el.querySelector('#goKey'); if (go) go.onclick = (e) => { e.preventDefault(); s.close(); G.go('settings'); setTimeout(() => G.openAiSetup(), 300); };
-    const onFile = (e) => { const file = e.target.files[0]; if (!file) return; s.close(); process(file, docHint); };
-    s.el.querySelector('#camIn').onchange = onFile;
-    s.el.querySelector('#fileIn').onchange = onFile;
+    // um toque: os botões de cima descobrem o tipo sozinhos; o cartão de tipo já abre a câmera com a dica
+    const onFile = (h) => (e) => { const file = e.target.files[0]; if (!file) return; s.close(); process(file, h); };
+    s.el.querySelector('#camIn').onchange = onFile(hint);
+    s.el.querySelector('#fileIn').onchange = onFile(hint);
+    G.$$('.scan-types label', s.el).forEach((l) => (l.querySelector('input').onchange = onFile(l.dataset.h)));
   };
 
   // ---------- processamento ----------

@@ -98,8 +98,8 @@
   G.bindTxRows = (root) => {
     G.$$('.tx-row', root).forEach((row) => {
       const inner = row.querySelector('.tx-inner');
-      let x0 = null, y0 = 0, dx = 0, swiping = false;
-      inner.addEventListener('pointerdown', (e) => { x0 = e.clientX; y0 = e.clientY; dx = 0; swiping = false; });
+      let x0 = null, y0 = 0, dx = 0, swiping = false, swiped = false;
+      inner.addEventListener('pointerdown', (e) => { x0 = e.clientX; y0 = e.clientY; dx = 0; swiping = false; swiped = false; });
       inner.addEventListener('pointermove', (e) => {
         if (x0 == null) return;
         const mx = e.clientX - x0, my = e.clientY - y0;
@@ -108,16 +108,19 @@
       });
       const end = () => {
         if (x0 == null) return;
+        swiped = swiping;
         if (swiping && dx < -90) {
           inner.style.transform = 'translateX(-110%)';
           setTimeout(() => G.deleteTx(row.dataset.id), 160);
-        } else if (!swiping) G.openTx(row.dataset.id);
-        else inner.style.transform = '';
+        } else if (swiping) inner.style.transform = '';
         row.classList.remove('arm');
         x0 = null;
       };
       inner.addEventListener('pointerup', end);
       inner.addEventListener('pointercancel', () => { inner.style.transform = ''; x0 = null; });
+      // abrir pelo "click" do navegador: ele tolera o dedo tremer um pouco no toque. Pelo pointerup,
+      // qualquer microdeslize virava rolagem (pointercancel) e o toque simples não abria nada
+      inner.addEventListener('click', () => { if (!swiped) G.openTx(row.dataset.id); swiped = false; });
     });
   };
 

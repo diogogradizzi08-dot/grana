@@ -243,6 +243,7 @@
     G.$$('[data-r]', root).forEach((b) => (b.onclick = () => editRecurring(rs.find((r) => r.id === b.dataset.r))));
     G.$$('[data-sub]', root).forEach((b) => (b.onclick = () => { const x = subs[b.dataset.sub]; editRecurring(null, { desc: x.desc, amount: x.amount, categoryId: x.categoryId }); }));
   };
+  G.editRecurring = (rec) => editRecurring(rec);
   function editRecurring(rec, preset = {}) {
     const r = rec ? { ...rec } : { id: G.uid(), type: 'expense', amount: 0, desc: '', categoryId: 'contas', accountId: (G.activeAccounts()[0] || {}).id, freq: 'monthly', day: Number(G.today().slice(8, 10)), start: G.today(), done: {}, ...preset };
     const s = G.sheet(`<h3 class="sheet-title">${rec ? 'Editar conta fixa' : 'Nova conta fixa'}</h3>
