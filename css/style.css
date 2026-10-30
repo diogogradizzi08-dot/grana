@@ -491,3 +491,8 @@ b, strong { font-weight: 700; }
 .update-bar > div { flex: 1; min-width: 0; display: flex; flex-direction: column; color: var(--text); }
 .update-bar small { color: var(--muted); font-size: 12px; }
 @media (min-width: 900px) { .update-bar { left: calc(232px + 24px); right: auto; width: 460px; } }
+
+/* motivo da chave recusada, fixo na tela */
+.err-box { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: var(--radius-sm); margin: 4px 0 12px;
+  background: color-mix(in srgb, var(--expense) 13%, transparent); color: color-mix(in srgb, var(--expense) 55%, var(--text)); font-size: 14px; line-height: 1.4; }
+.err-box .ic { margin-top: 1px; flex: none; }

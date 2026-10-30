@@ -121,10 +121,11 @@ Regras:
   }
 
   async function readWithGemini(base64, mime, hint) {
-    const key = G.state.settings.geminiKey.trim();
-    const models = G.state.settings.aiModel ? [G.state.settings.aiModel, ...MODELS] : MODELS;
-    let lastErr;
-    for (const model of models) {
+    const key = G.cleanKey(G.state.settings.geminiKey);
+    const models = [...new Set(G.state.settings.aiModel ? [G.state.settings.aiModel, ...MODELS] : MODELS)];
+    let lastErr, listed = false;
+    for (let i = 0; i < models.length; i++) {
+      const model = models[i];
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
@@ -133,12 +134,15 @@ Regras:
           generationConfig: { temperature: 0, responseMimeType: 'application/json' },
         }),
       }).catch(() => { throw new Error('Sem internet? A leitura com IA precisa de conexão.'); });
-      if (res.status === 404) { lastErr = new Error('Modelo indisponível: ' + model); continue; }
+      if (res.status === 404) {
+        lastErr = new Error('Modelo indisponível: ' + model);
+        if (!listed) { listed = true; for (const m of await listModels(key)) if (!models.includes(m)) models.push(m); }
+        continue;
+      }
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
         const msg = (body.error && body.error.message) || res.statusText;
-        if (res.status === 400 && /api key/i.test(msg)) throw new Error('A chave da IA é inválida. Confira em Ajustes → Leitura inteligente.');
-        if (res.status === 403) throw new Error('A chave da IA não tem permissão. Gere outra em aistudio.google.com e cole em Ajustes.');
+        if ((res.status === 400 && /api key/i.test(msg)) || res.status === 403) throw new Error(explain(res.status, msg, reasonOf(body.error || {})) + ' Ajuste em Mais, Ajustes, Leitura inteligente.');
         if (res.status === 429) throw new Error('Limite grátis da IA atingido por agora. Espere um minuto e tente de novo.');
         lastErr = new Error('Erro da IA: ' + msg); continue;
       }
@@ -149,19 +153,70 @@ Regras:
     throw lastErr || new Error('Não foi possível usar a IA.');
   }
 
-  // testa a chave antes de salvar
-  G.testGeminiKey = async (key) => {
-    for (const model of MODELS) {
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key.trim() },
-        body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'Responda só: ok' }] }] }),
-      });
-      if (res.status === 404) continue;
-      if (res.ok) return model;
+  // limpa o que vem junto ao colar (espaços, quebras de linha, aspas, caracteres invisíveis)
+  G.cleanKey = (k) => String(k || '').replace(/[\s\u200B-\u200D\uFEFF"'`]/g, '');
+
+  // traduz a resposta do Google para algo que dá para agir
+  function explain(status, msg, reason) {
+    const m = String(msg || '');
+    if (reason === 'API_KEY_INVALID' || /api key not valid|api_key_invalid/i.test(m)) return 'O Google diz que essa chave não existe. Confira se copiou a chave inteira, ou gere uma nova em aistudio.google.com/apikey.';
+    if (/expired/i.test(m)) return 'Essa chave expirou. Gere uma nova em aistudio.google.com/apikey.';
+    if (/referer|referrer|blocked|ip address|android|ios app/i.test(m)) return 'A chave tem uma restrição de uso (site, app ou IP) que bloqueia o Grana. No Google Cloud, em Credenciais, deixe a chave sem restrição de aplicativo — ou crie outra pelo AI Studio.';
+    if (reason === 'SERVICE_DISABLED' || /has not been used|is disabled|not enabled/i.test(m)) return 'A API do Gemini está desligada no projeto dessa chave. O jeito mais fácil: crie a chave pelo aistudio.google.com/apikey, que já liga tudo sozinho.';
+    if (/location is not supported|user location/i.test(m)) return 'O Google não liberou a IA grátis para a sua região ou conta.';
+    if (/billing/i.test(m) && status !== 429) return 'O projeto dessa chave pede faturamento. Crie a chave pelo aistudio.google.com/apikey num projeto novo (grátis).';
+    if (status === 403) return 'A chave não tem permissão para usar o Gemini (' + m + ').';
+    return 'O Google respondeu: ' + m + ' (código ' + status + ').';
+  }
+  const reasonOf = (err) => ((err.details || []).find((d) => d.reason) || {}).reason;
+
+  // modelos que a chave pode usar, perguntados ao próprio Google (os nomes mudam com o tempo)
+  async function listModels(key) {
+    try {
+      const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', { headers: { 'x-goog-api-key': key } });
+      if (!res.ok) return [];
+      const b = await res.json();
+      return (b.models || []).filter((m) => (m.supportedGenerationMethods || []).includes('generateContent'))
+        .map((m) => m.name.replace('models/', ''))
+        .filter((n) => /flash/.test(n) && !/image|tts|audio|live|thinking|embedding/.test(n))
+        .sort((a, b) => (b.includes('latest') - a.includes('latest')) || b.localeCompare(a));
+    } catch (e) { return []; }
+  }
+
+  // testa a chave antes de salvar. Devolve { model, key, warn }.
+  G.testGeminiKey = async (rawKey) => {
+    const key = G.cleanKey(rawKey);
+    // o formato só vira explicação quando o Google recusa (se ele mudar o formato, a chave boa passa)
+    const shapeHint = () => /^AIza[0-9A-Za-z_-]{35}$/.test(key) ? ''
+      : !key.startsWith('AIza') ? ' Ela também não tem cara de chave: as chaves do Google AI começam com "AIza". Talvez tenha copiado o nome ou o número do projeto.'
+      : ` Ela tem ${key.length} caracteres, e o normal é 39: faltou ou sobrou um pedaço ao copiar. Use o botão de copiar ao lado da chave no AI Studio.`;
+    const queue = MODELS.slice(), tried = new Set();
+    let listed = false, limited = null;
+    while (queue.length) {
+      const model = queue.shift();
+      if (tried.has(model)) continue;
+      tried.add(model);
+      let res;
+      try {
+        res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+          body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'Responda só: ok' }] }] }),
+        });
+      } catch (e) { throw new Error('Não consegui falar com o Google. Confira a internet e tente de novo.'); }
+      if (res.ok) return { model, key };
       const b = await res.json().catch(() => ({}));
-      throw new Error((b.error && b.error.message) || 'Chave recusada (' + res.status + ')');
+      const err = b.error || {}, msg = err.message || res.statusText;
+      // modelo aposentado ou fora do plano: pergunta ao Google quais existem
+      if (res.status === 404 || (res.status === 400 && /model/i.test(msg) && !/api key/i.test(msg))) {
+        if (!listed) { listed = true; queue.push(...(await listModels(key))); }
+        continue;
+      }
+      // limite ou servidor cheio: a chave É válida, então salva assim mesmo
+      if (res.status === 429 || res.status === 503 || res.status === 500) { limited = limited || model; continue; }
+      throw new Error(explain(res.status, msg, reasonOf(err)) + (res.status === 400 ? shapeHint() : ''));
     }
-    throw new Error('Nenhum modelo disponível para esta chave.');
+    if (limited) return { model: limited, key, warn: 'Chave aceita! O Google está no limite grátis agora; a leitura volta a funcionar em alguns minutos.' };
+    throw new Error('A chave foi aceita, mas nenhum modelo de IA está liberado para ela. Crie a chave pelo aistudio.google.com/apikey.');
   };
 
   // ---------- motor 2: leitor local ----------

@@ -471,14 +471,26 @@
         <li>Cole aqui embaixo e toque em <b>Testar e salvar</b>.</li>
       </ol>
       <label class="field"><span>Chave da API do Google AI</span><input id="k" value="${G.esc(st.geminiKey)}" placeholder="AIza..." autocomplete="off" spellcheck="false"></label>
+      <div class="err-box hidden" id="kErr">${G.icon('alert', 18)}<span></span></div>
       <div class="info-box">${G.icon('info', 18)}<span>O plano gratuito do Google não cobra nada e não pede cartão — dá para ler dezenas de notas por dia. A chave fica só neste aparelho e não vai no backup. A imagem do documento é enviada ao Google apenas para ser lida; no plano gratuito o Google pode usar esse conteúdo para melhorar os serviços dele. Se preferir total privacidade, use o leitor básico.</span></div>
       <div class="row-btns">${st.geminiKey ? '<button class="btn ghost danger-text" id="rm">Remover chave</button>' : '<button class="btn ghost" data-close>Agora não</button>'}<button class="btn primary" id="ok">Testar e salvar</button></div>`);
+    const errBox = s.el.querySelector('#kErr');
+    s.el.querySelector('#k').oninput = () => errBox.classList.add('hidden');
     s.el.querySelector('#ok').onclick = async () => {
-      const key = s.el.querySelector('#k').value.trim();
-      if (!key) return;
+      const raw = s.el.querySelector('#k').value;
+      if (!G.cleanKey(raw)) return;
       const b = s.el.querySelector('#ok'); b.disabled = true; b.textContent = 'Testando…';
-      try { const model = await G.testGeminiKey(key); st.geminiKey = key; st.aiModel = model; G.save(); s.close(); G.render(); G.toast('IA ativada! Já pode ler notas', { icon: 'sparkles' }); }
-      catch (e) { b.disabled = false; b.textContent = 'Testar e salvar'; G.toast('Chave não funcionou: ' + e.message, { icon: 'alert' }); }
+      errBox.classList.add('hidden');
+      try {
+        const r = await G.testGeminiKey(raw);
+        st.geminiKey = r.key; st.aiModel = r.model; G.save(); s.close(); G.render();
+        G.toast(r.warn || 'IA ativada! Já pode ler notas', { icon: r.warn ? 'alert' : 'sparkles' });
+      } catch (e) {
+        b.disabled = false; b.textContent = 'Testar de novo';
+        // o motivo fica escrito na tela (o aviso rápido sumia antes de dar para ler)
+        errBox.querySelector('span').innerHTML = '<b>A chave não funcionou.</b> ' + G.esc(e.message);
+        errBox.classList.remove('hidden');
+      }
     };
     const rm = s.el.querySelector('#rm'); if (rm) rm.onclick = () => { st.geminiKey = ''; G.save(); s.close(); G.render(); G.toast('Chave removida'); };
   };
