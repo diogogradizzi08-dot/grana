@@ -443,3 +443,44 @@ b, strong { font-weight: 700; }
 @media (min-width: 640px) { .scan-types { grid-template-columns: repeat(5, 1fr); } .scan-types button[data-h="auto"] { grid-column: auto; flex-direction: column; gap: 2px; } }
 .review-line { flex-wrap: wrap; row-gap: 6px; }
 .review-meta .chip small { color: var(--muted); font-weight: 700; }
+
+/* a pagar / pago */
+.status-seg { margin-top: 10px; max-width: 320px; }
+.status-seg button.on { color: var(--text) !important; }
+.pill.due { background: color-mix(in srgb, var(--warn) 16%, transparent); color: color-mix(in srgb, var(--warn) 70%, var(--text)); }
+.pill.late { background: color-mix(in srgb, var(--expense) 15%, transparent); color: var(--expense); }
+.pay-banner { background: color-mix(in srgb, var(--warn) 13%, var(--surface)); border: 1.5px solid color-mix(in srgb, var(--warn) 35%, transparent); border-radius: 16px; padding: 12px 14px; margin-bottom: 14px; display: flex; flex-direction: column; gap: 10px; }
+.pay-banner > div:first-child { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.pay-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.pay-actions .btn { position: relative; }
+.pay-actions input[type="date"] { position: absolute; inset: 0; opacity: 0; width: 100%; padding: 0; cursor: pointer; }
+.rec-box { display: flex; align-items: center; gap: 10px; padding: 12px; border-radius: 14px; background: var(--surface2); font-size: 14px; }
+.rec-box span { flex: 1; }
+.paid-date { margin-top: 10px; }
+.paid-date input { background: none; border: 0; padding: 0; width: auto; }
+.paid-date small { color: var(--muted); font-weight: 700; }
+
+/* fluxo de caixa */
+.forecast.flat { box-shadow: none; padding: 0; background: none; }
+.chips.period { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin-bottom: 14px; }
+.chips.period::-webkit-scrollbar { display: none; }
+.chips.period .chip { padding: 7px 12px; font-size: 13px; }
+.fc-flow { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; }
+.fc-flow div { display: flex; flex-direction: column; min-width: 0; }
+.fc-flow small { color: var(--muted); font-weight: 600; font-size: 12px; }
+.fc-flow b { font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 480px) { .fc-flow { grid-template-columns: 1fr 1fr; } }
+.fc-list { margin-top: 8px; }
+.fc-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); }
+.fc-row > b { white-space: nowrap; font-size: 14px; }
+.fc-row.late { background: linear-gradient(90deg, color-mix(in srgb, var(--expense) 8%, transparent), transparent); }
+.fc-row .btn.sm { padding: 7px 10px; }
+.fc-right { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; flex: none; }
+.fc-right b { white-space: nowrap; font-size: 14px; }
+.fc-right .btn.sm { padding: 5px 12px; font-size: 12.5px; border-radius: 9px; }
+.add-head .seg { min-width: 0; }
+.seg button { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 420px) { .add-head .seg button { font-size: 12.5px; padding: 9px 2px; } .add-head .icon-btn { width: 36px; } }
+.fc-flow { grid-template-columns: 1fr 1fr; row-gap: 12px; }
+.fc-flow b { font-size: 16px; }
+@media (min-width: 640px) { .forecast.flat .fc-flow { grid-template-columns: repeat(4, minmax(0, 1fr)); } }

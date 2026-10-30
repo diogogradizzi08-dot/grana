@@ -32,6 +32,7 @@
     let b = a.initial || 0;
     for (const t of G.state.tx) {
       if (upTo && t.date > upTo) continue;
+      if (t.pending) continue; // a pagar: o dinheiro ainda está na conta
       if (t.type === 'income' && t.accountId === accId) b += t.amount;
       else if (t.type === 'expense' && t.accountId === accId) b -= t.amount;
       else if (t.type === 'transfer') { if (t.accountId === accId) b -= t.amount; if (t.toAccountId === accId) b += t.amount; }
@@ -40,6 +41,65 @@
   };
   // patrimônio disponível: contas e dinheiro, sem o cartão (o cartão aparece como fatura)
   G.totalBalance = () => G.sum(G.activeAccounts().filter((a) => a.type !== 'credit'), (a) => G.accountBalance(a.id, G.today()));
+
+  // ---------- fluxo de caixa futuro ----------
+  // Tudo o que vai entrar e sair das contas (sem o cartão) entre hoje e `days` dias à frente:
+  // lançamentos a pagar/receber (inclusive os atrasados), lançamentos agendados, contas fixas
+  // ainda não confirmadas e faturas de cartão que vencem no período.
+  // Compra no cartão não entra sozinha: ela sai da conta quando a fatura vence.
+  G.forecast = (days = 30) => {
+    const today = G.today(), end = G.addDays(today, days);
+    const isCash = (id) => { const a = G.acc(id); return a.type !== 'credit' && !a.archived; };
+    const effect = (type, amount, accountId, toAccountId) => {
+      if (type === 'income') return isCash(accountId) ? amount : 0;
+      if (type === 'expense') return isCash(accountId) ? -amount : 0;
+      return (isCash(toAccountId) ? amount : 0) - (isCash(accountId) ? amount : 0);
+    };
+    const items = [];
+    for (const t of G.state.tx) {
+      const late = t.pending && t.date <= today;
+      if (!late && (t.date <= today || t.date > end)) continue;
+      const v = effect(t.type, t.amount, t.accountId, t.toAccountId);
+      if (!v) continue;
+      items.push({ kind: t.pending ? (late ? 'late' : 'pending') : 'scheduled', date: late ? today : t.date, origDate: t.date, value: v, desc: t.desc || G.cat(t.categoryId).name, categoryId: t.categoryId, type: t.type, tx: t });
+    }
+    for (const r of G.state.recurring) {
+      if (r.paused) continue;
+      for (const d of G.occurrences(r, G.addMonths(G.monthKey(today), -2) + '-01', end)) {
+        if ((r.done || {})[d]) continue;
+        const v = effect(r.type, r.amount, r.accountId, r.toAccountId);
+        if (!v) continue;
+        const late = d <= today;
+        items.push({ kind: late ? 'late' : 'recurring', date: late ? today : d, origDate: d, value: v, desc: r.desc, categoryId: r.categoryId, type: r.type, rec: r });
+      }
+    }
+    // faturas: o que ainda falta pagar de cada fatura com vencimento no período
+    for (const a of G.activeAccounts().filter((x) => x.type === 'credit')) {
+      for (let i = -1; i <= Math.ceil(days / 28) + 1; i++) {
+        const key = G.addMonths(G.currentInvoiceKey(a), i);
+        const inv = G.invoice(a.id, key);
+        if (inv.due <= today || inv.due > end || inv.total <= 0) continue;
+        const paid = G.sum(G.state.tx.filter((t) => t.type === 'transfer' && t.toAccountId === a.id && !t.pending && t.date > G.addDays(inv.closing, -10) && t.date <= inv.due), (t) => t.amount);
+        const scheduled = items.some((x) => x.tx && x.tx.type === 'transfer' && x.tx.toAccountId === a.id && x.origDate > G.addDays(inv.closing, -10) && x.origDate <= inv.due);
+        const left = inv.total - paid;
+        if (left > 0 && !scheduled) items.push({ kind: inv.closing > today ? 'invoice-open' : 'invoice', date: inv.due, origDate: inv.due, value: -left, desc: `Fatura ${a.name} (${G.monthName(key, false)})`, account: a, invoiceKey: key });
+      }
+    }
+    items.sort((x, y) => x.date.localeCompare(y.date) || x.value - y.value);
+    // saldo dia a dia
+    const start = G.totalBalance();
+    const series = [];
+    let bal = start, idx = 0, min = { value: start, date: today };
+    for (let i = 0; i <= days; i++) {
+      const d = G.addDays(today, i);
+      while (idx < items.length && items[idx].date === d) bal += items[idx++].value;
+      series.push(bal);
+      if (bal < min.value) min = { value: bal, date: d };
+    }
+    const income = G.sum(items.filter((x) => x.value > 0), (x) => x.value);
+    const expense = -G.sum(items.filter((x) => x.value < 0), (x) => x.value);
+    return { start, end: bal, income, expense, items, series, min, days };
+  };
 
   // ---------- cartão de crédito ----------
   // a fatura leva o nome do mês em que FECHA: compra depois do fechamento cai na fatura seguinte
@@ -102,8 +162,9 @@
     }
     return out.sort((a, b) => a.date.localeCompare(b.date));
   };
-  G.confirmRecurring = (r, date, amount = r.amount) => {
-    const tx = G.addTx({ type: r.type, amount, date, desc: r.desc, categoryId: r.categoryId, accountId: r.accountId, toAccountId: r.toAccountId, recurringId: r.id, source: 'recurring' });
+  // payDate: quando o dinheiro saiu de fato (pode ser antes do vencimento)
+  G.confirmRecurring = (r, date, amount = r.amount, payDate = date) => {
+    const tx = G.addTx({ type: r.type, amount, date: payDate, due: payDate !== date ? date : undefined, desc: r.desc, categoryId: r.categoryId, accountId: r.accountId, toAccountId: r.toAccountId, recurringId: r.id, source: 'recurring' });
     r.done = r.done || {}; r.done[date] = tx.id;
     return tx;
   };

@@ -6,13 +6,43 @@
     if (t) G.openAdd({ edit: t });
   };
 
+  function payBanner(t) {
+    const today = G.today(), inc = t.type === 'income';
+    const when = t.date < today ? `<b class="neg">atrasado há ${G.daysBetween(t.date, today)} dia(s)</b>` : t.date === today ? '<b>vence hoje</b>' : `vence em ${G.daysBetween(today, t.date)} dia(s)`;
+    return `<div class="pay-banner"><div>${G.icon('calendar', 18)}<span><b>${inc ? 'A receber' : 'A pagar'}</b> · ${G.shortDate(t.date)} · ${when}</span></div>
+      <div class="pay-actions"><button class="btn sm primary" data-pay="today">${inc ? 'Recebi hoje' : 'Paguei hoje'}</button>
+      <label class="btn sm ghost">${G.icon('calendar', 15)} Em outra data<input type="date" data-pay="other" max="${today}"></label></div></div>`;
+  }
+  G.payBanner = payBanner;
+  G.bindPayBanner = (root, t, sheet) => {
+    const b = root.querySelector('[data-pay="today"]');
+    if (b) b.onclick = () => { G.markPaid(t.id, G.today()); sheet && sheet.close(); };
+    const i = root.querySelector('[data-pay="other"]');
+    if (i) {
+      i.onchange = () => { if (i.value) { G.markPaid(t.id, i.value); sheet && sheet.close(); } };
+      i.parentElement.onclick = (e) => { if (e.target !== i && i.showPicker) { try { i.showPicker(); } catch (er) { } } };
+    }
+  };
+  // pagou: a data do lançamento vira a do pagamento (é quando o dinheiro saiu) e o vencimento fica guardado
+  G.markPaid = (id, date) => {
+    const t = G.state.tx.find((x) => x.id === id);
+    if (!t) return;
+    G.snapshot();
+    t.due = t.due || t.date; t.date = date; delete t.pending;
+    G.save(); G.render();
+    G.toast(`${t.type === 'income' ? 'Recebido' : 'Pago'} em ${G.shortDate(date)}`, { undo: true });
+  };
+
   G.openAdd = ({ type = 'expense', edit = null, preset = {} } = {}) => {
     const isEdit = !!edit;
     const f = edit ? JSON.parse(JSON.stringify(edit)) : {
       type, amount: 0, desc: '', categoryId: null, accountId: G.state.settings.lastAccount || (G.activeAccounts()[0] || {}).id,
       toAccountId: null, date: G.today(), notes: '', ...preset,
     };
-    let installments = 1, repeat = 'none', catTouched = isEdit || !!f.categoryId, moreOpen = !!(f.notes);
+    if (!isEdit && f.pending == null) f.pending = f.date > G.today();
+    const rec = isEdit && edit.recurringId ? G.state.recurring.find((r) => r.id === edit.recurringId) : null;
+    // status escolhido à mão não muda sozinho quando a data muda
+    let installments = 1, repeat = 'none', catTouched = isEdit || !!f.categoryId, moreOpen = !!(f.notes) || (isEdit && !rec && !edit.installment), statusTouched = isEdit;
 
     const s = G.sheet(`
       <div class="add-head">
@@ -28,22 +58,27 @@
           <div class="keypad" id="keypad">${['1', '2', '3', '4', '5', '6', '7', '8', '9', '00', '0', '⌫'].map((k) => `<button data-k="${k}">${k === '⌫' ? G.icon('left', 22) : k}</button>`).join('')}</div>
         </div>
         <div class="add-right">
+          ${isEdit && edit.pending ? payBanner(edit) : ''}
+          ${isEdit && !edit.pending && edit.due && edit.due !== edit.date ? `<div class="info-box">${G.icon('check', 18)}<span>Pago em ${G.shortDate(edit.date)} — o vencimento era ${G.shortDate(edit.due)}${edit.date < edit.due ? ` (${G.daysBetween(edit.date, edit.due)} dia(s) antes)` : edit.date > edit.due ? ` (${G.daysBetween(edit.due, edit.date)} dia(s) depois)` : ''}.</span></div>` : ''}
           <div class="desc-wrap"><input id="desc" class="desc-input" placeholder="Descrição (ex.: Padaria, Uber, Salário)" autocomplete="off" maxlength="80" value="${G.esc(f.desc)}">
             <div class="suggest" id="suggest"></div></div>
           <div id="catSec"><div class="sec-label">Categoria <span class="muted" id="catHint"></span></div><div id="cats"></div></div>
           <div class="sec-label" id="accLabel">Conta</div><div id="accs"></div>
           <div id="toSec" class="hidden"><div class="sec-label">Para</div><div id="toAccs"></div></div>
-          <div class="sec-label">Data</div>
+          <div class="sec-label" id="dateLabel">Data</div>
           <div class="chips" id="dates"><button class="chip" data-d="0">Hoje</button><button class="chip" data-d="-1">Ontem</button>
             <label class="chip date-chip">${G.icon('calendar', 16)}<span id="dateTxt"></span><input type="date" id="dateIn"></label></div>
+          <div class="seg wide status-seg" id="status"><button data-p="0"></button><button data-p="1"></button></div>
           ${f.splits && f.splits.length ? `<div class="sec-label">Itens da nota</div><div class="split-list">${f.splits.map((sp) => `<div class="split-line">${G.catBadge(G.cat(sp.categoryId), 28)}<span>${G.esc(G.cat(sp.categoryId).name)}</span><b>${G.money(sp.amount)}</b></div>`).join('')}</div>` : ''}
           <button class="more-toggle" id="moreBtn">${G.icon('down', 18)} Mais opções</button>
           <div id="more" class="${moreOpen ? '' : 'hidden'}">
             <label class="field"><span>Observação</span><textarea id="notes" rows="2" placeholder="Opcional">${G.esc(f.notes || '')}</textarea></label>
             ${isEdit ? '' : `<div class="field" id="instSec"><span>Parcelado no cartão?</span>
               <div class="stepper"><button data-s="-1">${G.icon('minus', 18)}</button><b id="instN">À vista</b><button data-s="1">${G.icon('plus', 18)}</button></div>
-              <small class="muted" id="instTxt"></small></div>
-            <div class="field"><span>Repetir</span><div class="chips" id="rep">
+              <small class="muted" id="instTxt"></small></div>`}
+            ${rec ? `<div class="field"><span>Repetir</span><div class="rec-box">${G.icon('repeat', 18)}<span><b>Conta fixa</b> — ${({ monthly: 'todo mês, dia ' + rec.day, weekly: 'toda semana', yearly: 'todo ano' })[rec.freq]}${rec.end ? ' · parada' : ''}</span>
+              ${rec.end ? '' : '<button class="btn sm ghost" id="stopRec">Parar de repetir</button>'}</div></div>`
+            : isEdit && edit.installment ? '' : `<div class="field"><span>Repetir</span><div class="chips" id="rep">
               <button class="chip on" data-r="none">Não</button><button class="chip" data-r="monthly">Todo mês</button><button class="chip" data-r="weekly">Toda semana</button><button class="chip" data-r="yearly">Todo ano</button></div>
               <small class="muted">Contas fixas (aluguel, salário, assinaturas) entram como previstas e você confirma com um toque.</small></div>`}
           </div>
@@ -154,7 +189,18 @@
       $('.date-chip').classList.toggle('on', other);
       $('#dateTxt').textContent = other ? G.shortDate(f.date) + (f.date.slice(0, 4) !== t.slice(0, 4) ? '/' + f.date.slice(2, 4) : '') : 'Outra data';
       $('#dateIn').value = f.date;
+      // data futura = ainda vai acontecer: entra como "a pagar" até você marcar como pago
+      if (!statusTouched) f.pending = f.date > t;
+      paintStatus();
     };
+    const paintStatus = () => {
+      const inc = f.type === 'income';
+      const [a, b] = G.$$('#status button', el);
+      a.textContent = inc ? 'Recebido' : 'Pago'; b.textContent = inc ? 'A receber' : 'A pagar';
+      a.classList.toggle('on', !f.pending); b.classList.toggle('on', !!f.pending);
+      $('#dateLabel').textContent = f.pending ? 'Vencimento' : (inc ? 'Recebido em' : f.type === 'transfer' ? 'Data' : 'Pago em');
+    };
+    G.$$('#status button', el).forEach((b) => (b.onclick = () => { f.pending = b.dataset.p === '1'; statusTouched = true; paintStatus(); }));
     G.$$('#dates [data-d]', el).forEach((b) => (b.onclick = () => { f.date = G.addDays(G.today(), Number(b.dataset.d)); paintDate(); }));
     $('#dateIn').onchange = (e) => { if (e.target.value) { f.date = e.target.value; paintDate(); } };
     $('.date-chip').onclick = (e) => { const i = $('#dateIn'); if (e.target !== i && i.showPicker) { try { i.showPicker(); } catch (er) { } } };
@@ -182,6 +228,9 @@
       f.desc = desc.value.trim(); f.notes = ($('#notes') || {}).value || '';
       if (f.type !== 'transfer') f.toAccountId = null;
       if (f.type === 'transfer') f.categoryId = null;
+      if (f.pending) f.due = f.date;
+      else if (isEdit && edit.pending) f.due = edit.date;
+      if (!f.pending) delete f.pending;
       G.state.settings.lastAccount = f.accountId;
       if (isEdit) {
         if (f.splits && f.splits.length && f.amount !== edit.amount) {
@@ -190,7 +239,14 @@
           f.splits.forEach((sp, i) => { sp.amount = i === f.splits.length - 1 ? f.amount - acc : Math.round(sp.amount * k); acc += sp.amount; });
         }
         G.updateTx(edit.id, f);
-        G.toast('Alterações salvas');
+        const t = G.state.tx.find((x) => x.id === edit.id);
+        if (!f.pending) delete t.pending;
+        if (repeat !== 'none' && !t.recurringId) {
+          // virou conta fixa depois de lançado: este lançamento é a primeira ocorrência
+          const r = { id: G.uid(), type: f.type, amount: f.amount, desc: (f.desc || G.cat(f.categoryId).name).replace(/\s*\(\d+\/\d+\)$/, ''), categoryId: f.categoryId, accountId: f.accountId, toAccountId: f.toAccountId, freq: repeat, day: Number((f.due || f.date).slice(8, 10)), start: f.due || f.date, done: { [f.due || f.date]: t.id } };
+          G.state.recurring.push(r); t.recurringId = r.id;
+          G.toast('Salvo — e agora se repete ' + ({ monthly: 'todo mês', weekly: 'toda semana', yearly: 'todo ano' })[repeat]);
+        } else G.toast('Alterações salvas');
       } else if (installments > 1) {
         const group = G.uid(), base = Math.floor(f.amount / installments), first = f.amount - base * (installments - 1);
         for (let i = 0; i < installments; i++) {
@@ -222,10 +278,16 @@
         delete copy.id; delete copy.installment; delete copy.recurringId; delete copy.createdAt;
         G.addTx(copy); G.save(); G.render(); s.close(); G.toast('Duplicado com a data de hoje');
       };
+      const stop = $('#stopRec');
+      if (stop) stop.onclick = async () => {
+        if (!(await G.confirm('Parar de repetir?', 'Os lançamentos já feitos continuam. Só deixam de aparecer os próximos.', { ok: 'Parar' }))) return;
+        rec.end = G.today(); G.save(); s.close(); G.render(); G.toast('Não se repete mais');
+      };
+      G.bindPayBanner(el, edit, s);
       if (edit.installment) el.querySelector('.add-foot').insertAdjacentHTML('afterbegin', `<small class="muted foot-note">Parcela ${edit.installment.n} de ${edit.installment.total} — a edição vale só para esta parcela.</small>`);
     }
 
-    paintAmt(); paintType(); paintDate(); paintInst();
+    paintAmt(); paintType(); paintDate(); paintInst(); paintStatus();
     if (f.desc) autoCat();
   };
 })(window.G);

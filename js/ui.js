@@ -71,6 +71,7 @@
       cls = t.type;
     }
     const tags = [];
+    if (t.pending) tags.push(`<span class="pill ${t.date < G.today() ? 'late' : 'due'}">${t.date < G.today() ? 'atrasado' : t.type === 'income' ? 'a receber' : 'a pagar'}</span>`);
     if (t.installment) tags.push(`<span class="pill">${t.installment.n}/${t.installment.total}</span>`);
     if (t.recurringId) tags.push(`<span class="pill">${G.icon('repeat', 11)}</span>`);
     if (t.source === 'scan') tags.push(`<span class="pill">${G.icon('sparkles', 11)}</span>`);

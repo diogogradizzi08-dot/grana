@@ -86,5 +86,25 @@
       <div class="vbar"><div class="vbar-fill ${i === highlight ? 'hi' : ''}" style="height:${(v / max * 100).toFixed(1)}%" title="${G.money(v)}"></div><span>${labels[i]}</span></div>`).join('')}</div>`;
   };
 
+  // saldo projetado dia a dia: linha com área; abaixo de zero fica vermelho
+  G.balanceLine = (series, { height = 120, width = G.chartWidth() } = {}) => {
+    const W = width, H = height, pad = 8, padB = 18;
+    const min = Math.min(0, ...series), max = Math.max(1, ...series);
+    const x = (i) => pad + (W - pad * 2) * (i / (series.length - 1 || 1));
+    const y = (v) => pad + (H - padB - pad) * (1 - (v - min) / (max - min || 1));
+    const pts = series.map((v, i) => x(i).toFixed(1) + ' ' + y(v).toFixed(1));
+    const line = 'M' + pts.join(' L');
+    const area = line + ` L ${x(series.length - 1)} ${y(min)} L ${x(0)} ${y(min)} Z`;
+    const neg = min < 0;
+    return `<svg class="chart" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">
+      <defs><linearGradient id="balG" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="var(--brand)" stop-opacity=".25"/><stop offset="1" stop-color="var(--brand)" stop-opacity="0"/></linearGradient>
+      <clipPath id="belowZero"><rect x="0" y="${y(0)}" width="${W}" height="${H}"/></clipPath></defs>
+      <path d="${area}" fill="url(#balG)"/>
+      ${neg ? `<line x1="0" x2="${W}" y1="${y(0)}" y2="${y(0)}" stroke="var(--expense)" stroke-dasharray="4 4"/>` : ''}
+      <path d="${line}" fill="none" stroke="var(--brand)" stroke-width="2.5" vector-effect="non-scaling-stroke"/>
+      ${neg ? `<path d="${line}" fill="none" stroke="var(--expense)" stroke-width="2.5" clip-path="url(#belowZero)"/>` : ''}
+      <text x="${pad}" y="${H - 4}" class="axis">hoje</text><text x="${W - pad}" y="${H - 4}" text-anchor="end" class="axis">em ${series.length - 1} dias</text></svg>`;
+  };
+
   G.progress = (ratio, cls = '') => `<div class="progress ${cls}"><div style="width:${Math.min(100, ratio * 100).toFixed(1)}%"></div></div>`;
 })(window.G);

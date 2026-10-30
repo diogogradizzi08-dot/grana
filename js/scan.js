@@ -384,7 +384,10 @@ Regras:
       <div class="card flush" id="rvItems"></div>
       <button class="more-toggle" id="rvAdd">${G.icon('plus', 18)} Adicionar item</button>
       <div class="sec-label">${d.docType === 'bill' ? 'Pagar com' : 'Pago com'}</div><div id="rvAcc"></div>
-      ${d.docType === 'bill' ? `<p class="muted small">O lançamento fica na data do vencimento: até lá ele aparece na lista, mas não mexe no saldo de hoje.</p>
+      ${d.docType === 'bill' ? `<div class="sec-label">Situação</div>
+        <div class="seg wide" id="rvStatus"><button data-s="pending">Pagar no vencimento</button><button data-s="paid">Já paguei</button></div>
+        <label class="chip paid-date hidden" id="rvPaidWrap">${G.icon('calendar', 16)}<small>pago em</small><input type="date" id="rvPaid" value="${G.today()}" max="${G.today()}"></label>
+        <p class="muted small" id="rvStatusTxt"></p>
         <label class="check"><input type="checkbox" id="rvRec"> Chega todo mês (condomínio, escola…) — criar conta fixa</label>` : ''}
       <div class="sec-label">Como lançar</div>
       <div class="seg wide" id="rvMode"><button data-m="split" class="on">1 lançamento dividido</button><button data-m="each">1 por categoria</button></div>
@@ -424,10 +427,23 @@ Regras:
     paint();
     el.querySelector('#rvAdd').onclick = () => { d.items.push({ name: 'Item', qty: 1, amount: 0, categoryId: 'mercado' }); paint(); };
     el.querySelector('#rvAcc').appendChild(G.accountChips(accountId, (id) => (accountId = id)));
+    // boleto lido antes do vencimento costuma ser conta a pagar; depois, quase sempre já foi pago
+    let billPaid = d.docType === 'bill' && d.date <= G.today();
+    const paintStatus = () => {
+      if (d.docType !== 'bill') return;
+      G.$$('#rvStatus button', el).forEach((b) => b.classList.toggle('on', (b.dataset.s === 'paid') === billPaid));
+      el.querySelector('#rvPaidWrap').classList.toggle('hidden', !billPaid);
+      el.querySelector('#rvStatusTxt').textContent = billPaid ? 'Lançado na data do pagamento; o vencimento fica guardado.' : 'Fica "a pagar" na data do vencimento: aparece no fluxo de caixa do Início e não mexe no saldo até você marcar como pago.';
+    };
+    G.$$('#rvStatus button', el).forEach((b) => (b.onclick = () => { billPaid = b.dataset.s === 'paid'; paintStatus(); }));
+    paintStatus();
     G.$$('#rvMode button', el).forEach((b) => (b.onclick = () => { mode = b.dataset.m; G.$$('#rvMode button', el).forEach((x) => x.classList.toggle('on', x === b)); }));
     el.querySelector('#rvSave').onclick = () => {
       const merchant = el.querySelector('#rvMerchant').value.trim() || d.merchant;
-      const date = el.querySelector('#rvDate').value || d.date;
+      const due = el.querySelector('#rvDate').value || d.date;
+      const isBill = d.docType === 'bill';
+      const date = isBill && billPaid ? (el.querySelector('#rvPaid').value || G.today()) : due;
+      const status = isBill ? (billPaid ? { due } : { pending: true, due }) : {};
       if (d.discount) d.items.push({ name: 'Desconto', qty: 1, amount: -d.discount, categoryId: d.items[0] ? d.items[0].categoryId : 'outros' });
       const groups = {};
       d.items.forEach((i) => { (groups[i.categoryId] = groups[i.categoryId] || []).push(i); });
@@ -437,11 +453,11 @@ Regras:
       const cats = Object.keys(groups);
       if (mode === 'split' || cats.length === 1) {
         const splits = cats.map((c) => ({ categoryId: c, amount: G.sum(groups[c], (i) => i.amount) })).filter((x) => x.amount).sort((a, b) => b.amount - a.amount);
-        G.addTx({ type: d.kind, amount: total, date, desc: merchant, categoryId: splits[0].categoryId, accountId, splits: splits.length > 1 ? splits : undefined, items, source: 'scan' });
+        G.addTx({ type: d.kind, amount: total, date, desc: merchant, categoryId: splits[0].categoryId, accountId, splits: splits.length > 1 ? splits : undefined, items, source: 'scan', ...status });
       } else {
         for (const c of cats) {
           const amt = G.sum(groups[c], (i) => i.amount);
-          if (amt > 0) G.addTx({ type: d.kind, amount: amt, date, desc: `${merchant} · ${G.cat(c).name}`, categoryId: c, accountId, items: groups[c], source: 'scan' });
+          if (amt > 0) G.addTx({ type: d.kind, amount: amt, date, desc: `${merchant} · ${G.cat(c).name}`, categoryId: c, accountId, items: groups[c], source: 'scan', ...status });
         }
       }
       const rec = el.querySelector('#rvRec');
@@ -449,12 +465,12 @@ Regras:
         // o próximo boleto aparece no Início para confirmar; o valor pode ser ajustado na hora
         const main = cats.sort((a, b) => G.sum(groups[b], (i) => i.amount) - G.sum(groups[a], (i) => i.amount))[0];
         const last = G.state.tx[G.state.tx.length - 1];
-        const r = { id: G.uid(), type: 'expense', amount: total, desc: merchant, categoryId: main, accountId, freq: 'monthly', day: Number(date.slice(8, 10)), start: date, done: { [date]: last.id } };
+        const r = { id: G.uid(), type: 'expense', amount: total, desc: merchant, categoryId: main, accountId, freq: 'monthly', day: Number(due.slice(8, 10)), start: due, done: { [due]: last.id } };
         G.state.recurring.push(r); last.recurringId = r.id;
       }
       G.state.settings.lastAccount = accountId;
       G.save(); G.render(); s.close();
-      if (d.docType === 'bill') { G.toast(`Boleto de ${G.money(total)} lançado para ${G.shortDate(date)}`, { icon: 'sparkles' }); return; }
+      if (isBill) { G.toast(billPaid ? `Boleto de ${G.money(total)} pago em ${G.shortDate(date)}` : `Boleto de ${G.money(total)} a pagar em ${G.shortDate(due)}`, { icon: 'sparkles' }); return; }
       G.toast(`Nota de ${G.money(total)} lançada em ${cats.length} categoria(s)`, { icon: 'sparkles' });
     };
   }

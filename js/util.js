@@ -58,6 +58,7 @@ window.G = window.G || {};
     const base = WD[d.getDay()] + ', ' + d.getDate() + ' de ' + MONTHS[d.getMonth()];
     return d.getFullYear() !== new Date().getFullYear() ? base + ' de ' + d.getFullYear() : base;
   };
+  G.daysBetween = (a, b) => Math.round((G.parseDate(b) - G.parseDate(a)) / 864e5);
   G.shortDate = (s) => { const d = G.parseDate(s); return pad(d.getDate()) + '/' + pad(d.getMonth() + 1); };
 
   G.screens = {};
