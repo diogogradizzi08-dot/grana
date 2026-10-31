@@ -14,7 +14,8 @@
     const cats = G.byCategory(G.txInMonth(key), 'expense');
     const budget = G.budgetStatus(key);
     const cards = G.activeAccounts().filter((a) => a.type === 'credit');
-    const recent = G.state.tx.slice().sort((a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt).slice(0, 6);
+    // só o que já aconteceu: parcela e lançamento de data futura moram nos "Próximos 30 dias"
+    const recent = G.state.tx.filter((t) => t.date <= G.today()).sort((a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt).slice(0, 6);
     const hour = new Date().getHours();
     const hello = (hour < 12 ? 'Bom dia' : hour < 18 ? 'Boa tarde' : 'Boa noite') + (G.state.settings.name ? ', ' + G.state.settings.name : '');
     const ratio = tot.income ? Math.min(1, tot.expense / tot.income) : (tot.expense ? 1 : 0);
