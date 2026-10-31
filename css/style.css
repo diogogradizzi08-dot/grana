@@ -501,3 +501,4 @@ b, strong { font-weight: 700; }
 #instMore .inst-sub { font-size: 13px; color: var(--muted); margin-top: 4px; }
 #instC { min-width: 96px; }
 .inst-all { display: flex; gap: 8px; flex-wrap: wrap; width: 100%; justify-content: center; margin-bottom: 4px; }
+.inst-all .muted { align-self: center; font-size: 13px; }

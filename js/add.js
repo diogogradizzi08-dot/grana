@@ -78,7 +78,7 @@
             ${isEdit ? '' : `<div class="field" id="instSec"><span>Parcelado no cartão?</span>
               <div class="stepper"><button data-s="-1">${G.icon('minus', 18)}</button><b id="instN">À vista</b><button data-s="1">${G.icon('plus', 18)}</button></div>
               <div id="instMore" class="hidden">
-                <span class="inst-sub">Parcela atual</span>
+                <span class="inst-sub">Próxima parcela a pagar</span>
                 <div class="stepper"><button data-c="-1">${G.icon('minus', 18)}</button><b id="instC">1ª</b><button data-c="1">${G.icon('plus', 18)}</button></div>
                 <span class="inst-sub">O valor digitado é</span>
                 <div class="chips" id="instVal"><button class="chip on" data-v="0">Total da compra</button><button class="chip" data-v="1">Valor da parcela</button></div>
@@ -182,7 +182,7 @@
     // ---------- contas ----------
     const renderAccs = () => {
       const a = $('#accs'); a.innerHTML = '';
-      a.appendChild(G.accountChips(f.accountId, (id) => { f.accountId = id; if (f.toAccountId === id) f.toAccountId = null; renderAccs(); }));
+      a.appendChild(G.accountChips(f.accountId, (id) => { f.accountId = id; if (f.toAccountId === id) f.toAccountId = null; renderAccs(); paintInst(); }));
       if (f.type === 'transfer') {
         const b = $('#toAccs'); b.innerHTML = '';
         b.appendChild(G.accountChips(f.toAccountId, (id) => (f.toAccountId = id), { exclude: f.accountId }));
@@ -199,7 +199,7 @@
       $('#dateIn').value = f.date;
       // data futura = ainda vai acontecer: entra como "a pagar" até você marcar como pago
       if (!statusTouched) f.pending = f.date > t;
-      paintStatus();
+      paintStatus(); paintInst();
     };
     const paintStatus = () => {
       const inc = f.type === 'income';
@@ -228,6 +228,12 @@
       $('#instTxt').innerHTML = installments === 1 || !f.amount ? ''
         : instCur === 1 ? `${installments} parcelas de <b>${p}</b> (compra de ${tot}) — uma em cada mês, a partir da data escolhida.`
         : `Cada parcela: <b>${p}</b> · compra inteira: <b>${tot}</b>.<br>Lança da ${instCur}/${installments} até a ${installments}/${installments} (${left} parcela(s)), a ${instCur}ª na data escolhida e uma por mês depois. As ${instCur - 1} já pagas ficam de fora.`;
+      // no cartão, diz em qual fatura a primeira parcela cai — é aí que se vê se ela já foi paga
+      const acc = G.acc(f.accountId);
+      if (installments > 1 && f.amount && acc && acc.type === 'credit') {
+        const key = G.invoiceKey(acc, f.date);
+        $('#instTxt').innerHTML += `<br><b>A ${instCur}ª entra na fatura de ${G.monthName(key, false)}</b> (vence ${G.shortDate(G.invoiceDue(acc, key))}). Se essa fatura já foi paga com ela dentro, avance a data um mês.`;
+      }
     };
     G.$$('[data-s]', el).forEach((b) => (b.onclick = () => { installments = Math.max(1, Math.min(48, installments + Number(b.dataset.s))); if (installments > 1) setRepeat('none'); paintInst(); }));
     G.$$('[data-c]', el).forEach((b) => (b.onclick = () => {
@@ -311,6 +317,7 @@
       if (edit.installment) {
         const sibs = () => G.state.tx.filter((t) => t.installment && t.installment.group === edit.installment.group);
         el.querySelector('.add-foot').insertAdjacentHTML('afterbegin', `<small class="muted foot-note">Parcela ${edit.installment.n} de ${edit.installment.total} — "Salvar" vale só para esta parcela.</small>
+          <div class="inst-all"><span class="muted">Mover a compra inteira:</span><button class="btn sm ghost" data-mv="-1">${G.icon('left', 16)} 1 mês</button><button class="btn sm ghost" data-mv="1">1 mês ${G.icon('right', 16)}</button></div>
           <div class="inst-all"><button class="btn sm ghost" id="instAllVal">Usar este valor em todas (${sibs().length})</button><button class="btn sm ghost danger-text" id="instAllDel">Apagar a compra inteira</button></div>`);
         $('#instAllVal').onclick = async () => {
           if (!validate()) return;
@@ -320,6 +327,18 @@
           sibs().forEach((t) => { t.amount = f.amount; delete t.splits; });
           G.save(); G.render(); s.close(); G.toast(`${n} parcelas corrigidas`, { undo: true });
         };
+        // parcela que caiu numa fatura já paga: empurra todas juntas, mantendo uma por mês
+        G.$$('[data-mv]', el).forEach((b) => (b.onclick = () => {
+          const k = Number(b.dataset.mv), list = sibs(), day = Math.max(...list.map((t) => Number(t.date.slice(8, 10))));
+          G.snapshot();
+          list.forEach((t) => {
+            t.date = G.dateInMonth(G.addMonths(G.monthKey(t.date), k), day);
+            if (t.pending) t.due = t.date;
+          });
+          const first = list.slice().sort((a, b) => a.date.localeCompare(b.date))[0], acc = G.acc(first.accountId);
+          G.save(); G.render(); s.close();
+          G.toast(`${list.length} parcelas movidas ${k > 0 ? 'um mês para frente' : 'um mês para trás'}` + (acc && acc.type === 'credit' ? ` — a ${first.installment.n}ª fica na fatura de ${G.monthName(G.invoiceKey(acc, first.date), false)}` : ''), { undo: true });
+        }));
         $('#instAllDel').onclick = async () => {
           const n = sibs().length;
           if (!(await G.confirm('Apagar a compra inteira?', `Apaga as ${n} parcelas lançadas desta compra. Dá para desfazer logo depois.`, { ok: 'Apagar todas', danger: true }))) return;
