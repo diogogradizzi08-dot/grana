@@ -31,16 +31,50 @@
     root.innerHTML = `<header class="topbar"><a href="#more" class="icon-btn">${G.icon('left')}</a><h1>Contas e cartões</h1><button class="btn sm primary" id="newAcc">${G.icon('plus', 16)} Nova</button></header>
       <div class="hero card slim"><div class="hero-top"><span>Total disponível</span></div><div class="hero-value">${G.money(G.totalBalance())}</div>
         ${cards.length ? `<div class="hero-cards">${G.icon('card', 14)}<span>Cartões a pagar <b>${G.money(G.cardsToPay())}</b></span><span>livre de verdade <b>${G.money(G.totalBalance() - G.cardsToPay())}</b></span></div>` : ''}</div>
-      <div class="sec-label">Contas</div>
+      <div class="sec-label row-label"><span>Contas</span>${accs.length > 1 ? `<button class="link" id="reorder">${G.icon('swap', 14)} Organizar ordem</button>` : ''}</div>
       <div class="acc-grid">${normal.map((a) => { const b = G.accountBalance(a.id, G.today()); return `<button class="acc-card card" data-acc="${a.id}" style="--c:${a.color}">
         ${G.accBadge(a, 40)}<span class="acc-name">${G.esc(a.name)}<small>${G.ACCOUNT_TYPES[a.type].label}</small></span><b class="${b < 0 ? 'neg' : ''}">${G.money(b)}</b></button>`; }).join('') || '<p class="muted">Nenhuma conta.</p>'}</div>
       <div class="sec-label">Cartões de crédito</div>
       <div class="acc-grid">${cards.map((a) => G.cardVisual(a)).join('') || `<button class="card add-card" id="newCard">${G.icon('plus', 22)} Adicionar cartão de crédito</button>`}</div>
       <p class="hint">${G.icon('info', 14)} Cada compra no cartão fica gravada na fatura escolhida ao lançar. Pagar a fatura é uma transferência da conta para o cartão — não conta como gasto de novo.</p>`;
     root.querySelector('#newAcc').onclick = () => G.editAccount(null);
+    const ro = root.querySelector('#reorder'); if (ro) ro.onclick = () => G.openReorder();
     const nc = root.querySelector('#newCard'); if (nc) nc.onclick = () => G.editAccount(null, 'credit');
     G.$$('[data-acc]', root).forEach((b) => (b.onclick = () => G.accountDetail(b.dataset.acc)));
     G.$$('[data-card]', root).forEach((b) => (b.onclick = () => G.openInvoice(b.dataset.card, G.focusInvoiceKey(G.acc(b.dataset.card)))));
+  };
+
+  // ordem das contas e cartões: é a mesma em todo o app (Início, "Pago com", filtros)
+  G.openReorder = () => {
+    const s = G.sheet(`<h3 class="sheet-title">Organizar contas e cartões</h3>
+      <p class="muted">Use as setas para subir ou descer. Essa ordem vale no app inteiro — inclusive nas opções de "Pago com".</p><div id="ro"></div>
+      <div class="row-btns"><button class="btn primary" data-close>Pronto</button></div>`, { wide: true });
+    const box = s.el.querySelector('#ro');
+    const groups = [['Contas', (a) => a.type !== 'credit'], ['Cartões de crédito', (a) => a.type === 'credit']];
+    const paint = () => {
+      box.innerHTML = groups.map(([label, ok]) => {
+        const list = G.activeAccounts().filter(ok);
+        if (!list.length) return '';
+        return `<div class="sec-label">${label}</div><div class="card flush ro-list">${list.map((a, i) => `<div class="ro-row">
+          ${G.accBadge(a, 34)}<span class="ro-name">${G.esc(a.name)}<small>${G.ACCOUNT_TYPES[a.type].label}</small></span>
+          <button class="icon-btn" data-mv="-1" data-id="${a.id}" ${i === 0 ? 'disabled' : ''} aria-label="Subir">${G.icon('up', 20)}</button>
+          <button class="icon-btn" data-mv="1" data-id="${a.id}" ${i === list.length - 1 ? 'disabled' : ''} aria-label="Descer">${G.icon('down', 20)}</button></div>`).join('')}</div>`;
+      }).join('');
+      G.$$('[data-mv]', box).forEach((b) => (b.onclick = () => {
+        const arr = G.state.accounts, a = arr.find((x) => x.id === b.dataset.id), credit = a.type === 'credit';
+        // troca com a vizinha do MESMO grupo (contas com contas, cartões com cartões), pulando as arquivadas
+        const peers = arr.filter((x) => !x.archived && (x.type === 'credit') === credit);
+        const j = peers.indexOf(a) + Number(b.dataset.mv), other = peers[j];
+        if (!other) return;
+        const ia = arr.indexOf(a), io = arr.indexOf(other);
+        [arr[ia], arr[io]] = [arr[io], arr[ia]];
+        G.vibrate && G.vibrate(8);
+        G.save(); paint(); G.render();
+        const moved = box.querySelector(`[data-id="${a.id}"]`);
+        if (moved) moved.closest('.ro-row').classList.add('ro-moved');
+      }));
+    };
+    paint();
   };
 
   G.accountDetail = (id) => {
