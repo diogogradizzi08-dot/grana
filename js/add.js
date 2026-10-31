@@ -43,7 +43,7 @@
     const rec = isEdit && edit.recurringId ? G.state.recurring.find((r) => r.id === edit.recurringId) : null;
     // status escolhido à mão não muda sozinho quando a data muda
     // compra parcelada que começou antes do app: parcela atual + se o valor digitado é o total ou a parcela
-    let instCur = 1, perParcel = false, valTouched = false;
+    let instCur = 1, perParcel = false;
     let installments = 1, repeat = 'none', catTouched = isEdit || !!f.categoryId, moreOpen = !!(f.notes) || (isEdit && !rec && !edit.installment), statusTouched = isEdit;
 
     const s = G.sheet(`
@@ -223,19 +223,18 @@
       $('#instC').textContent = `${instCur}ª de ${installments}`;
       G.$$('#instVal .chip', el).forEach((x) => x.classList.toggle('on', (x.dataset.v === '1') === perParcel));
       const left = installments - instCur + 1;
-      const p = G.money(perParcel ? f.amount : Math.floor(f.amount / installments), { force: true });
-      $('#instTxt').textContent = installments === 1 || !f.amount ? ''
-        : instCur === 1 ? `${installments} parcelas de ${p} — uma em cada mês, a partir da data escolhida.`
-        : `Lança da ${instCur}/${installments} até a ${installments}/${installments}: ${left} parcela(s) de ${p}, a ${instCur}ª na data escolhida e uma por mês depois. As ${instCur - 1} já pagas ficam de fora.`;
+      const pv = perParcel ? f.amount : Math.floor(f.amount / installments);
+      const p = G.money(pv, { force: true }), tot = G.money(perParcel ? f.amount * installments : f.amount, { force: true });
+      $('#instTxt').innerHTML = installments === 1 || !f.amount ? ''
+        : instCur === 1 ? `${installments} parcelas de <b>${p}</b> (compra de ${tot}) — uma em cada mês, a partir da data escolhida.`
+        : `Cada parcela: <b>${p}</b> · compra inteira: <b>${tot}</b>.<br>Lança da ${instCur}/${installments} até a ${installments}/${installments} (${left} parcela(s)), a ${instCur}ª na data escolhida e uma por mês depois. As ${instCur - 1} já pagas ficam de fora.`;
     };
     G.$$('[data-s]', el).forEach((b) => (b.onclick = () => { installments = Math.max(1, Math.min(48, installments + Number(b.dataset.s))); if (installments > 1) setRepeat('none'); paintInst(); }));
     G.$$('[data-c]', el).forEach((b) => (b.onclick = () => {
       instCur = Math.max(1, Math.min(installments, instCur + Number(b.dataset.c)));
-      // compra antiga: o que se tem na mão é o valor da parcela na fatura
-      if (instCur > 1 && !valTouched) perParcel = true;
       paintInst();
     }));
-    G.$$('#instVal .chip', el).forEach((b) => (b.onclick = () => { perParcel = b.dataset.v === '1'; valTouched = true; paintInst(); }));
+    G.$$('#instVal .chip', el).forEach((b) => (b.onclick = () => { perParcel = b.dataset.v === '1'; paintInst(); }));
     const setRepeat = (r) => { repeat = r; G.$$('#rep .chip', el).forEach((x) => x.classList.toggle('on', x.dataset.r === r)); };
     G.$$('#rep .chip', el).forEach((b) => (b.onclick = () => { setRepeat(b.dataset.r); if (repeat !== 'none') { installments = 1; paintInst(); } }));
 
@@ -309,7 +308,26 @@
         rec.end = G.today(); G.save(); s.close(); G.render(); G.toast('Não se repete mais');
       };
       G.bindPayBanner(el, edit, s);
-      if (edit.installment) el.querySelector('.add-foot').insertAdjacentHTML('afterbegin', `<small class="muted foot-note">Parcela ${edit.installment.n} de ${edit.installment.total} — a edição vale só para esta parcela.</small>`);
+      if (edit.installment) {
+        const sibs = () => G.state.tx.filter((t) => t.installment && t.installment.group === edit.installment.group);
+        el.querySelector('.add-foot').insertAdjacentHTML('afterbegin', `<small class="muted foot-note">Parcela ${edit.installment.n} de ${edit.installment.total} — "Salvar" vale só para esta parcela.</small>
+          <div class="inst-all"><button class="btn sm ghost" id="instAllVal">Usar este valor em todas (${sibs().length})</button><button class="btn sm ghost danger-text" id="instAllDel">Apagar a compra inteira</button></div>`);
+        $('#instAllVal').onclick = async () => {
+          if (!validate()) return;
+          const n = sibs().length;
+          if (!(await G.confirm('Corrigir todas as parcelas?', `As ${n} parcelas lançadas desta compra passam a valer <b>${G.money(f.amount, { force: true })}</b> cada.`, { ok: 'Corrigir todas' }))) return;
+          G.snapshot();
+          sibs().forEach((t) => { t.amount = f.amount; delete t.splits; });
+          G.save(); G.render(); s.close(); G.toast(`${n} parcelas corrigidas`, { undo: true });
+        };
+        $('#instAllDel').onclick = async () => {
+          const n = sibs().length;
+          if (!(await G.confirm('Apagar a compra inteira?', `Apaga as ${n} parcelas lançadas desta compra. Dá para desfazer logo depois.`, { ok: 'Apagar todas', danger: true }))) return;
+          G.snapshot();
+          sibs().forEach((t) => G.removeTx(t.id));
+          G.save(); G.render(); s.close(); G.toast(`${n} parcelas apagadas`, { undo: true, icon: 'trash' });
+        };
+      }
     }
 
     paintAmt(); paintType(); paintDate(); paintInst(); paintStatus();
