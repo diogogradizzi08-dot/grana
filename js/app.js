@@ -1,6 +1,6 @@
 /* Grana — casca do app: navegação, tema, primeira abertura e dados de exemplo. */
 (function (G) {
-  G.VERSION = '1.2.0'; // ao publicar: igual ao version.json e suba o VERSION do sw.js
+  G.VERSION = '1.3.0'; // ao publicar: igual ao version.json e suba o VERSION do sw.js
   G.screens = G.screens || {};
   const TABS = [['home', 'home', 'Início'], ['tx', 'list', 'Lançamentos'], ['insights', 'pie', 'Análises'], ['more', 'grid', 'Mais']];
   const MORE_ROUTES = ['accounts', 'budgets', 'goals', 'recurring', 'categories', 'import', 'settings'];
@@ -11,9 +11,15 @@
   G.render = () => {
     const r = G.screens[route()] ? route() : 'home';
     const view = G.$('#view');
-    const y = view.dataset.route === r ? window.scrollY : 0;
+    const same = view.dataset.route === r, y = same ? window.scrollY : 0;
     view.dataset.route = r;
     G.screens[r](view);
+    // ao trocar de tela: os blocos sobem em cascata e o número principal conta até o valor.
+    // Re-desenhar a mesma tela (depois de salvar algo) não anima, para não piscar.
+    if (!same && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      view.classList.remove('enter'); void view.offsetWidth; view.classList.add('enter');
+      G.$$('.hero-value', view).forEach(G.countUp);
+    }
     const tab = MORE_ROUTES.includes(r) ? 'more' : r;
     G.$$('.nav-item').forEach((n) => n.classList.toggle('on', n.dataset.r === tab));
     window.scrollTo(0, y);

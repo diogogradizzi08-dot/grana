@@ -355,13 +355,30 @@
       }
       G.save(); G.render();
     };
-    $('#save').onclick = () => { if (!validate()) return; persist(); s.close(); };
+    // um toque duplo (ou toque + Enter) rodava o salvar duas vezes e lançava as parcelas em dobro
+    let saving = false;
+    // mesma compra parcelada já lançada neste cartão, com parcelas nas mesmas faturas: pergunta antes
+    const sameExisting = () => {
+      if (isEdit || installments < 2) return null;
+      const nm = G.norm(desc.value.trim() || G.cat(f.categoryId).name), rows = planRows(), credit = isCredit();
+      const acc = G.acc(f.accountId), mine = new Set(rows.map((r) => r.invoice || G.monthKey(r.date)));
+      const hit = G.state.tx.find((t) => t.installment && t.accountId === f.accountId && G.norm(G.baseName(t)) === nm
+        && mine.has(credit ? G.txInvoiceKey(acc, t) : G.monthKey(t.date)));
+      return hit ? G.planOf(hit.installment.group) : null;
+    };
+    const guarded = async (after) => {
+      if (saving || !validate()) return;
+      saving = true;
+      const dup = sameExisting();
+      if (dup && !(await G.confirm('Essa compra já está lançada?', `Já existe <b>${G.esc(G.baseName(dup[0]))}</b> em ${dup[0].installment.total}x de ${G.money(dup[0].amount)} neste ${isCredit() ? 'cartão' : 'conta'}, com parcelas nas mesmas faturas. Lançar de novo vai repetir as parcelas.`, { ok: 'Lançar mesmo assim' }))) { saving = false; return; }
+      persist(); after();
+    };
+    $('#save').onclick = () => guarded(() => s.close());
     const sn = $('#saveNew');
-    if (sn) sn.onclick = () => {
-      if (!validate()) return; persist();
+    if (sn) sn.onclick = () => guarded(() => {
       const keep = { type: f.type, accountId: f.accountId, date: f.date };
       s.close(); setTimeout(() => G.openAdd({ type: keep.type, preset: { accountId: keep.accountId, date: keep.date } }), 280);
-    };
+    });
     if (isEdit) {
       $('#del').onclick = () => { s.close(); G.deleteTx(edit.id); };
       $('#dup').onclick = () => {

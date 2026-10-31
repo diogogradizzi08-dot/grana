@@ -29,20 +29,18 @@
     const accs = G.activeAccounts();
     const normal = accs.filter((a) => a.type !== 'credit'), cards = accs.filter((a) => a.type === 'credit');
     root.innerHTML = `<header class="topbar"><a href="#more" class="icon-btn">${G.icon('left')}</a><h1>Contas e cartões</h1><button class="btn sm primary" id="newAcc">${G.icon('plus', 16)} Nova</button></header>
-      <div class="hero card slim"><div class="hero-top"><span>Total disponível</span></div><div class="hero-value">${G.money(G.totalBalance())}</div></div>
+      <div class="hero card slim"><div class="hero-top"><span>Total disponível</span></div><div class="hero-value">${G.money(G.totalBalance())}</div>
+        ${cards.length ? `<div class="hero-cards">${G.icon('card', 14)}<span>Cartões a pagar <b>${G.money(G.cardsToPay())}</b></span><span>livre de verdade <b>${G.money(G.totalBalance() - G.cardsToPay())}</b></span></div>` : ''}</div>
       <div class="sec-label">Contas</div>
       <div class="acc-grid">${normal.map((a) => { const b = G.accountBalance(a.id, G.today()); return `<button class="acc-card card" data-acc="${a.id}" style="--c:${a.color}">
         ${G.accBadge(a, 40)}<span class="acc-name">${G.esc(a.name)}<small>${G.ACCOUNT_TYPES[a.type].label}</small></span><b class="${b < 0 ? 'neg' : ''}">${G.money(b)}</b></button>`; }).join('') || '<p class="muted">Nenhuma conta.</p>'}</div>
       <div class="sec-label">Cartões de crédito</div>
-      <div class="acc-grid">${cards.map((a) => { const inv = G.invoice(a.id, G.currentInvoiceKey(a)); const used = -Math.min(0, G.accountBalance(a.id)); return `<button class="acc-card card cc" data-card="${a.id}" style="--c:${a.color}">
-        <div class="cc-top">${G.icon('card', 22)}<span>${G.esc(a.name)}</span></div>
-        <div class="cc-mid"><small>Fatura de ${G.monthName(inv.key, false)}</small><b>${G.money(inv.total)}</b><small>fecha ${G.shortDate(inv.closing)} · vence ${G.shortDate(inv.due)}</small></div>
-        ${a.limit ? `<div class="cc-limit">${G.progress(used / a.limit, used / a.limit > 0.8 ? 'over' : '')}<small>${G.money(Math.max(0, a.limit - used))} de limite livre</small></div>` : ''}</button>`; }).join('') || `<button class="card add-card" id="newCard">${G.icon('plus', 22)} Adicionar cartão de crédito</button>`}</div>
-      <p class="hint">${G.icon('info', 14)} Compras no cartão entram na fatura pelo dia de fechamento. Para pagar a fatura, use “Pagar fatura” — é uma transferência da conta para o cartão.</p>`;
+      <div class="acc-grid">${cards.map((a) => G.cardVisual(a)).join('') || `<button class="card add-card" id="newCard">${G.icon('plus', 22)} Adicionar cartão de crédito</button>`}</div>
+      <p class="hint">${G.icon('info', 14)} Cada compra no cartão fica gravada na fatura escolhida ao lançar. Pagar a fatura é uma transferência da conta para o cartão — não conta como gasto de novo.</p>`;
     root.querySelector('#newAcc').onclick = () => G.editAccount(null);
     const nc = root.querySelector('#newCard'); if (nc) nc.onclick = () => G.editAccount(null, 'credit');
     G.$$('[data-acc]', root).forEach((b) => (b.onclick = () => G.accountDetail(b.dataset.acc)));
-    G.$$('[data-card]', root).forEach((b) => (b.onclick = () => G.openInvoice(b.dataset.card)));
+    G.$$('[data-card]', root).forEach((b) => (b.onclick = () => G.openInvoice(b.dataset.card, G.focusInvoiceKey(G.acc(b.dataset.card)))));
   };
 
   G.accountDetail = (id) => {
@@ -111,21 +109,21 @@
   // fatura do cartão, mês a mês: situação, pagar o que falta, o que já está comprometido nas próximas
   G.openInvoice = (accId, key = null) => {
     const a = G.acc(accId), cur = G.currentInvoiceKey(a);
-    key = key || cur;
+    key = key || G.focusInvoiceKey(a);
     const inv = G.invoice(accId, key);
     const parc = inv.items.filter((t) => t.installment), single = inv.items.filter((t) => !t.installment);
     const cats = G.byCategory(inv.items, 'expense');
-    const strip = [-1, 0, 1, 2, 3, 4].map((i) => G.addMonths(cur, i)).map((k) => ({ k, inv: G.invoice(accId, k) }));
+    // a fileira começa na fatura aberta (ou na antiga que está sendo vista) e mostra as próximas
+    const first = key < G.addMonths(cur, -1) ? key : G.addMonths(cur, -1);
+    const strip = [0, 1, 2, 3, 4, 5].map((i) => G.addMonths(first, i)).map((k) => ({ k, inv: G.invoice(accId, k) }));
     const max = Math.max(1, ...strip.map((x) => x.inv.total));
-    const stTxt = { open: `Aberta · fecha ${G.shortDate(inv.closing)}`, closed: `Fechada · vence ${G.shortDate(inv.due)}`, late: `Vencida em ${G.shortDate(inv.due)}`, paid: 'Paga', empty: 'Sem compras' }[inv.status];
     const list = (arr) => `<div class="card flush">${arr.sort((x, y) => y.date.localeCompare(x.date)).map(G.txRow).join('')}</div>`;
     const s = G.sheet(`<div class="add-head"><button class="icon-btn" data-close>${G.icon('x')}</button><h3 class="sheet-title" style="margin:0">${G.esc(a.name)}</h3><button class="icon-btn" id="ed" title="Fechamento e vencimento">${G.icon('settings')}</button></div>
+      ${G.dupBanner((g) => inv.items.some((t) => t.installment && t.installment.group === g))}
       <div class="month-switch center-row"><button class="icon-btn" data-m="-1">${G.icon('left')}</button><span class="month-label">Fatura de ${G.monthName(key)}</span><button class="icon-btn" data-m="1">${G.icon('right')}</button></div>
-      <div class="hero card slim" style="--brand:${a.color}">
-        <div class="hero-top"><span class="inv-st st-${inv.status}">${stTxt}</span><span>vence ${G.shortDate(inv.due)}</span></div>
-        <div class="hero-value">${G.money(inv.total)}</div>
-        <div class="hero-sub">${inv.items.length} lançamento(s) · fecha ${G.shortDate(inv.closing)}${inv.paid > 0 && inv.left > 0 ? ` · pago ${G.money(inv.paid)}, falta <b>${G.money(inv.left)}</b>` : ''}</div></div>
-      ${inv.left > 0 ? `<button class="btn primary big wide-btn" id="pay">${G.icon('check', 18)} Pagar ${G.money(inv.left)}</button>`
+      ${G.cardVisual(a, { key, tag: 'div' })}
+      <div class="inv-facts"><span><small>Compras</small><b>${single.length}</b></span><span><small>Parcelas</small><b>${parc.length}</b></span><span><small>Pago</small><b>${G.money(inv.paid)}</b></span><span><small>Falta</small><b class="${inv.left ? 'neg' : ''}">${G.money(inv.left)}</b></span></div>
+      ${inv.left > 0 ? `<button class="btn ${inv.status === 'open' ? 'ghost' : 'primary'} big wide-btn" id="pay">${G.icon('check', 18)} ${inv.status === 'open' ? 'Antecipar pagamento de ' : 'Pagar '}${G.money(inv.left)}</button>`
         : inv.status === 'paid' ? `<div class="inv-paid">${G.icon('check', 18)} Fatura paga${inv.paid > inv.total ? ` · pago a mais ${G.money(inv.paid - inv.total)}` : ''}</div>` : ''}
       <button class="btn ghost wide-btn" id="addHere">${G.icon('plus', 18)} Lançar compra nesta fatura</button>
       <div class="sec-label">Faturas</div>
@@ -140,6 +138,7 @@
     G.$$('[data-m]', s.el).forEach((b) => (b.onclick = () => go(G.addMonths(key, Number(b.dataset.m)))));
     G.$$('.inv-strip [data-k]', s.el).forEach((b) => (b.onclick = () => { if (b.dataset.k !== key) go(b.dataset.k); }));
     s.el.querySelector('#ed').onclick = () => { s.close(); G.editAccount(a); };
+    G.bindDupBanner(s.el, () => s.close());
     s.el.querySelector('#addHere').onclick = () => { s.close(); setTimeout(() => G.openAdd({ type: 'expense', preset: { accountId: accId, invoice: key } }), 200); };
     const pay = s.el.querySelector('#pay');
     // o pagamento leva a fatura gravada: não depende mais da data cair "perto" do vencimento
@@ -159,6 +158,7 @@
     const per = list[list.length - 1].amount, next = open[0];
     const reopen = () => setTimeout(() => G.openPlan(group), 220);
     const s = G.sheet(`<div class="add-head"><button class="icon-btn" data-close>${G.icon('x')}</button><h3 class="sheet-title" style="margin:0">Compra parcelada</h3><button class="icon-btn danger-text" id="pDel" title="Apagar a compra">${G.icon('trash')}</button></div>
+      ${G.dupBanner((g) => g === group)}
       <div class="plan-hero card" style="--c:${acc.color}">
         <div class="ph-top">${G.catBadge(G.cat(t0.categoryId), 46)}<div><b>${G.esc(name)}</b><small>${G.esc(G.cat(t0.categoryId).name)} · ${G.esc(acc.name)}</small></div></div>
         <div class="ph-nums"><div><small>Parcela</small><b>${G.money(per)}</b></div><div><small>Parcelas</small><b>${total}x</b></div><div><small>Falta pagar</small><b>${G.money(G.sum(open, (x) => x.t.amount))}</b></div></div>
@@ -180,6 +180,7 @@
       </div>
       <p class="hint">${G.icon('info', 14)} Toque numa parcela para mudar só ela — o valor, a fatura ou apagar.</p>`, { wide: true });
     const el = s.el;
+    G.bindDupBanner(el, () => s.close());
     G.$$('.pl-row[data-id]', el).forEach((b) => (b.onclick = () => { s.close(); setTimeout(() => G.openAdd({ edit: G.state.tx.find((x) => x.id === b.dataset.id) }), 200); }));
     // mover a compra inteira: cada parcela vai uma fatura (um mês) para o lado, todas juntas
     G.$$('[data-mv]', el).forEach((b) => (b.onclick = () => {
@@ -236,6 +237,57 @@
       G.removeTx(list.map((t) => t.id));
       G.save(); G.render(); s.close(); G.toast(`${list.length} parcelas apagadas`, { undo: true, icon: 'trash' });
     };
+  };
+
+  // ======================= COMPRAS REPETIDAS =======================
+  G.openDupPlans = (groups) => {
+    const plans = groups.map((g) => G.planOf(g)).filter((l) => l.length);
+    if (plans.length < 2) return;
+    const acc = G.acc(plans[0][0].accountId), credit = acc.type === 'credit';
+    const when = (t) => (credit ? G.cap(G.monthAbbr(G.txInvoiceKey(acc, t))) + ' ' + G.txInvoiceKey(acc, t).slice(2, 4) : G.shortDate(t.date));
+    const card = (list, i) => {
+      const t0 = list[0], tot = t0.installment.total, per = list[list.length - 1].amount;
+      // a compra em que cada parcela vale o total de outra — o engano de digitar o total como parcela
+      const bloated = plans.some((o) => o !== list && Math.abs(per - G.sum([o[o.length - 1]], (t) => t.amount) * tot) <= tot);
+      return `<div class="card dup-card">
+        <div class="dup-top"><b>${G.esc(G.baseName(t0))}</b><span class="pill">${tot}x</span></div>
+        <div class="dup-nums"><div><small>Parcela</small><b>${G.money(per)}</b></div><div><small>Lançadas</small><b>${list.length} (${t0.installment.n}ª a ${list[list.length - 1].installment.n}ª)</b></div><div><small>Soma</small><b>${G.money(G.sum(list, (t) => t.amount))}</b></div></div>
+        <small class="muted">${credit ? 'Faturas' : 'Meses'}: ${when(t0)} → ${when(list[list.length - 1])} · lançada em ${G.shortDate(new Date(t0.createdAt || Date.now()).toISOString().slice(0, 10))}</small>
+        ${bloated ? `<div class="cc-warn">${G.icon('alert', 16)}<span>Cada parcela desta vale o total da outra compra — parece que o valor total foi lançado como parcela.</span></div>` : ''}
+        <div class="row-btns"><button class="btn ghost" data-see="${i}">Ver parcelas</button><button class="btn danger" data-del="${i}">${G.icon('trash', 16)} Apagar esta</button></div></div>`;
+    };
+    const s = G.sheet(`<h3 class="sheet-title">Compras repetidas?</h3>
+      <p class="muted">Estas compras têm o mesmo nome no ${credit ? 'cartão' : 'conta'} ${G.esc(acc.name)} e parcelas nas mesmas ${credit ? 'faturas' : 'meses'} — por isso aparecem em dobro. Apague a que estiver errada.</p>
+      ${plans.map(card).join('')}
+      <button class="btn ghost wide-btn" id="notDup">Não são repetidas — são compras diferentes</button>`, { wide: true });
+    G.$$('[data-see]', s.el).forEach((b) => (b.onclick = () => { s.close(); setTimeout(() => G.openPlan(plans[b.dataset.see][0].installment.group), 200); }));
+    G.$$('[data-del]', s.el).forEach((b) => (b.onclick = async () => {
+      const list = plans[b.dataset.del];
+      if (!(await G.confirm('Apagar esta compra?', `Apaga as ${list.length} parcelas de "${G.esc(G.baseName(list[0]))}" desta linha. A outra fica.`, { ok: 'Apagar', danger: true }))) return;
+      G.snapshot();
+      G.removeTx(list.map((t) => t.id));
+      G.save(); G.render(); s.close();
+      G.toast(`${list.length} parcelas repetidas apagadas`, { undo: true, icon: 'trash' });
+    }));
+    s.el.querySelector('#notDup').onclick = () => {
+      const st = G.state.settings;
+      st.dupIgnore = [...(st.dupIgnore || []), groups.slice().sort().join(',')];
+      G.save(); G.render(); s.close(); G.toast('Certo, não vou mais avisar sobre essas');
+    };
+  };
+  // aviso de repetidas: na fatura, mostra só as que têm parcela nela
+  G.dupBanner = (filter = null) => {
+    const sets = G.duplicatePlans().filter((set) => !filter || set.some(filter));
+    if (!sets.length) return '';
+    const names = sets.map((set) => G.esc(G.baseName(G.planOf(set[0])[0]))).join(', ');
+    return `<button class="dup-alert" data-dups='${JSON.stringify(sets)}'>${G.icon('alert', 18)}<span><b>${sets.length === 1 ? 'Compra parcelada repetida' : sets.length + ' compras parceladas repetidas'}</b>${names} aparece em dobro</span><em>Revisar</em></button>`;
+  };
+  G.bindDupBanner = (root, before) => {
+    G.$$('[data-dups]', root).forEach((b) => (b.onclick = () => {
+      const sets = JSON.parse(b.dataset.dups);
+      before && before();
+      setTimeout(() => G.openDupPlans(sets[0]), before ? 200 : 0);
+    }));
   };
 
   // ======================= ORÇAMENTO =======================

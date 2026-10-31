@@ -67,7 +67,8 @@
       const c = t.splits && t.splits.length > 1 ? { icon: '🧾', color: '#64748B', name: `Dividido em ${t.splits.length} categorias` } : G.cat(t.categoryId);
       badge = G.catBadge(c);
       title = t.desc || c.name;
-      sub = `${G.esc(c.name)} · ${G.esc(G.acc(t.accountId).name)}`;
+      const acc = G.acc(t.accountId);
+      sub = `${G.esc(c.name)} · ${G.esc(acc.name)}` + (acc.type === 'credit' && t.type === 'expense' ? ` · fatura ${G.monthAbbr(G.txInvoiceKey(acc, t))}` : '');
       cls = t.type;
     }
     const tags = [];
@@ -81,6 +82,44 @@
       <div class="tx-inner">${badge}
         <div class="tx-main"><div class="tx-title">${G.esc(title)} ${tags.join('')}</div><div class="tx-sub">${sub}</div></div>
         <div class="tx-amt ${cls}">${sign}${G.money(t.amount, { abs: true })}</div></div></div>`;
+  };
+
+  // número que conta até o valor (só o visual; o texto final é o mesmo de antes)
+  G.countUp = (el) => {
+    const txt = el.textContent, m = txt.match(/-?[\d.]+,\d{2}/);
+    if (!m || G.state.settings.hideValues || el.children.length) return;
+    const target = Number(m[0].replace(/\./g, '').replace(',', '.'));
+    if (!target) return;
+    const t0 = performance.now(), dur = 650;
+    const fmt = (v) => txt.replace(m[0], v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+    const step = (now) => {
+      const k = Math.min(1, (now - t0) / dur), e = 1 - Math.pow(1 - k, 3);
+      el.textContent = k < 1 ? fmt(target * e) : txt;
+      if (k < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  };
+
+  // cartão de crédito como objeto: fatura que importa, situação, prazo em dias e limite livre
+  G.cardVisual = (a, { key = null, tag = 'button' } = {}) => {
+    const cur = G.currentInvoiceKey(a);
+    key = key || G.focusInvoiceKey(a);
+    const inv = G.invoice(a.id, key), today = G.today();
+    const used = -Math.min(0, G.accountBalance(a.id));
+    const dd = (d) => G.daysBetween(today, d);
+    const when = inv.status === 'open' ? (dd(inv.closing) ? `fecha em ${dd(inv.closing)} dia${dd(inv.closing) > 1 ? 's' : ''}` : 'fecha hoje')
+      : inv.status === 'paid' ? 'paga' : inv.status === 'late' ? `venceu há ${G.daysBetween(inv.due, today)} dia(s)`
+      : inv.status === 'empty' ? 'sem compras' : dd(inv.due) ? `vence em ${dd(inv.due)} dia${dd(inv.due) > 1 ? 's' : ''}` : 'vence hoje';
+    const pct = a.limit ? Math.min(100, (used / a.limit) * 100) : 0;
+    const open = key !== cur ? G.invoice(a.id, cur) : null;
+    return `<${tag} class="ccv" ${tag === 'button' ? `data-card="${a.id}"` : ''} style="--c:${a.color}">
+      <div class="ccv-top"><span class="ccv-name">${G.esc(a.name)}</span><span class="ccv-st st-${inv.status}">${inv.label}</span></div>
+      <span class="ccv-chip"></span>
+      <div class="ccv-mid"><small>Fatura de ${G.monthName(key, false)}</small><b>${G.money(inv.status === 'paid' ? inv.total : inv.left || inv.total)}</b>
+        <small><span class="ccv-when ${inv.status}">${when}</span> · vence ${G.shortDate(inv.due)}</small></div>
+      ${open && open.total > 0 ? `<small class="ccv-next">Fatura aberta de ${G.monthName(cur, false)}: ${G.money(open.total)}</small>` : ''}
+      ${a.limit ? `<div class="ccv-lim"><div class="ccv-bar"><i style="width:${pct}%"></i></div><small><span>${G.money(Math.max(0, a.limit - used))} livre</span><span>limite ${G.moneyShort(a.limit)}</span></small></div>` : ''}
+    </${tag}>`;
   };
 
   // lista agrupada por dia, com total do dia

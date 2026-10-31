@@ -14,6 +14,7 @@
     const cats = G.byCategory(G.txInMonth(key), 'expense');
     const budget = G.budgetStatus(key);
     const cards = G.activeAccounts().filter((a) => a.type === 'credit');
+    const toPay = cards.length ? G.cardsToPay() : 0;
     // só o que já aconteceu: parcela e lançamento de data futura moram nos "Próximos 30 dias"
     const recent = G.state.tx.filter((t) => t.date <= G.today()).sort((a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt).slice(0, 6);
     const hour = new Date().getHours();
@@ -28,6 +29,7 @@
           <div class="hero-top"><span>Saldo nas contas</span>${G.icon('wallet', 18)}</div>
           <div class="hero-value">${G.money(balance)}</div>
           <div class="hero-sub">${fc.items.length ? `Daqui a ${fdays} dias: <b>${G.money(fc.end)}</b>` : 'Inclui contas e dinheiro, sem o cartão de crédito'}</div>
+          ${cards.length && toPay ? `<div class="hero-cards">${G.icon('card', 14)}<span>Cartões a pagar <b>${G.money(toPay)}</b></span><span>livre de verdade <b>${G.money(balance - toPay)}</b></span></div>` : ''}
           <div class="hero-split">
             <div><small>${G.icon('arrowUp', 14)} Receitas em ${G.monthName(key, false)}</small><b>${G.money(tot.income)}</b></div>
             <div><small>${G.icon('arrowDown', 14)} Despesas</small><b>${G.money(tot.expense)}</b></div>
@@ -67,9 +69,8 @@
 
         ${cards.length ? `<section class="card">
           <div class="card-head"><h2>${G.icon('card', 18)} Cartões</h2><a href="#accounts" class="link">Faturas</a></div>
-          ${cards.map((a) => { const inv = G.invoice(a.id, G.currentInvoiceKey(a)); return `<button class="inv-row" data-acc="${a.id}">${G.accBadge(a, 36)}
-            <span class="tx-main"><span class="tx-title">${G.esc(a.name)}</span><span class="tx-sub">Fatura de ${G.monthName(inv.key, false)} · vence ${G.shortDate(inv.due)}</span></span>
-            <span class="right"><b>${G.money(inv.total)}</b>${a.limit ? `<small class="muted">${G.pct(inv.total / a.limit)} do limite</small>` : ''}</span></button>`; }).join('')}
+          ${G.dupBanner()}
+          <div class="ccv-row ${cards.length > 1 ? 'many' : ''}">${cards.map((a) => G.cardVisual(a)).join('')}</div>
         </section>` : ''}
 
         <section class="card recent">
@@ -83,7 +84,8 @@
     G.bindForecast(root, fc);
     G.$$('[data-leak]', root).forEach((b) => (b.onclick = () => G.openLeak(leaks[b.dataset.leak], key)));
     G.$$('[data-act^="cat:"]', root).forEach((b) => (b.onclick = () => G.openList({ categoryId: b.dataset.act.slice(4) }, key)));
-    G.$$('[data-acc]', root).forEach((b) => (b.onclick = () => G.openInvoice(b.dataset.acc)));
+    G.$$('[data-card]', root).forEach((b) => (b.onclick = () => G.openInvoice(b.dataset.card, G.focusInvoiceKey(G.acc(b.dataset.card)))));
+    G.bindDupBanner(root);
     G.bindTxRows(root);
   };
 

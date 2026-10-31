@@ -132,7 +132,38 @@
     const status = total > 0 && left <= 0 ? 'paid' : today <= closing ? 'open' : total <= 0 ? 'empty' : today > due ? 'late' : 'closed';
     return { key, items, credits, total, due, closing, paid, left, status, label: G.INVOICE_LABEL[status] };
   };
+  // a fatura que importa agora: uma fechada ainda por pagar vem antes da aberta (é a que tem prazo)
+  G.focusInvoiceKey = (acc) => {
+    const cur = G.currentInvoiceKey(acc);
+    for (const k of [G.addMonths(cur, -2), G.addMonths(cur, -1)]) { const s = G.invoice(acc.id, k).status; if (s === 'closed' || s === 'late') return k; }
+    return cur;
+  };
+  // o que os cartões ainda vão tirar das contas: faturas fechadas por pagar + a aberta até agora
+  G.cardsToPay = () => G.sum(G.activeAccounts().filter((a) => a.type === 'credit'), (a) => {
+    const cur = G.currentInvoiceKey(a);
+    return G.sum([-2, -1, 0], (i) => G.invoice(a.id, G.addMonths(cur, i)).left);
+  });
   G.INVOICE_LABEL = { open: 'aberta', closed: 'fechada', late: 'vencida', paid: 'paga', empty: 'sem compras' };
+  G.baseName = (t) => (t.desc || '').replace(/\s*\(\d+\/\d+\)$/, '');
+  // compras parceladas repetidas: mesmo nome no mesmo cartão/conta, com parcelas nas mesmas faturas (ou meses).
+  // Nasce de lançar duas vezes (toque duplo, ou recriar sem apagar a antiga). Devolve conjuntos de grupos.
+  G.duplicatePlans = () => {
+    const plans = {};
+    for (const t of G.state.tx) if (t.installment && t.type === 'expense') (plans[t.installment.group] = plans[t.installment.group] || []).push(t);
+    const byKey = {};
+    for (const [group, list] of Object.entries(plans)) {
+      const t0 = list[0], acc = G.acc(t0.accountId);
+      const k = t0.accountId + '|' + G.norm(G.baseName(t0));
+      (byKey[k] = byKey[k] || []).push({ group, months: new Set(list.map((t) => (acc.type === 'credit' ? G.txInvoiceKey(acc, t) : G.monthKey(t.date)))) });
+    }
+    const ignore = new Set(G.state.settings.dupIgnore || []), out = [];
+    for (const arr of Object.values(byKey)) {
+      if (arr.length < 2) continue;
+      const hit = arr.filter((a) => arr.some((b) => b !== a && [...a.months].some((m) => b.months.has(m)))).map((x) => x.group).sort();
+      if (hit.length > 1 && !ignore.has(hit.join(','))) out.push(hit);
+    }
+    return out;
+  };
   G.planOf = (group) => G.state.tx.filter((t) => t.installment && t.installment.group === group).sort((a, b) => a.installment.n - b.installment.n);
   // situação de uma parcela, para a lista da compra parcelada
   G.parcelStatus = (t) => {
