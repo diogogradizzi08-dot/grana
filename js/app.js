@@ -1,6 +1,6 @@
 /* Grana — casca do app: navegação, tema, primeira abertura e dados de exemplo. */
 (function (G) {
-  G.VERSION = '1.1.3'; // ao publicar: igual ao version.json e suba o VERSION do sw.js
+  G.VERSION = '1.1.4'; // ao publicar: igual ao version.json e suba o VERSION do sw.js
   G.screens = G.screens || {};
   const TABS = [['home', 'home', 'Início'], ['tx', 'list', 'Lançamentos'], ['insights', 'pie', 'Análises'], ['more', 'grid', 'Mais']];
   const MORE_ROUTES = ['accounts', 'budgets', 'goals', 'recurring', 'categories', 'import', 'settings'];

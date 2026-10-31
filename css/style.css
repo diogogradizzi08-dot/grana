@@ -495,3 +495,8 @@ b, strong { font-weight: 700; }
 .err-box { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: var(--radius-sm); margin: 4px 0 12px;
   background: color-mix(in srgb, var(--expense) 13%, transparent); color: color-mix(in srgb, var(--expense) 55%, var(--text)); font-size: 14px; line-height: 1.4; }
 .err-box .ic { margin-top: 1px; flex: none; }
+
+/* parcela atual de compra parcelada antiga */
+#instMore { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+#instMore .inst-sub { font-size: 13px; color: var(--muted); margin-top: 4px; }
+#instC { min-width: 96px; }

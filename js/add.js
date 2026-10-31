@@ -42,6 +42,8 @@
     if (!isEdit && f.pending == null) f.pending = f.date > G.today();
     const rec = isEdit && edit.recurringId ? G.state.recurring.find((r) => r.id === edit.recurringId) : null;
     // status escolhido à mão não muda sozinho quando a data muda
+    // compra parcelada que começou antes do app: parcela atual + se o valor digitado é o total ou a parcela
+    let instCur = 1, perParcel = false, valTouched = false;
     let installments = 1, repeat = 'none', catTouched = isEdit || !!f.categoryId, moreOpen = !!(f.notes) || (isEdit && !rec && !edit.installment), statusTouched = isEdit;
 
     const s = G.sheet(`
@@ -75,6 +77,12 @@
             <label class="field"><span>Observação</span><textarea id="notes" rows="2" placeholder="Opcional">${G.esc(f.notes || '')}</textarea></label>
             ${isEdit ? '' : `<div class="field" id="instSec"><span>Parcelado no cartão?</span>
               <div class="stepper"><button data-s="-1">${G.icon('minus', 18)}</button><b id="instN">À vista</b><button data-s="1">${G.icon('plus', 18)}</button></div>
+              <div id="instMore" class="hidden">
+                <span class="inst-sub">Parcela atual</span>
+                <div class="stepper"><button data-c="-1">${G.icon('minus', 18)}</button><b id="instC">1ª</b><button data-c="1">${G.icon('plus', 18)}</button></div>
+                <span class="inst-sub">O valor digitado é</span>
+                <div class="chips" id="instVal"><button class="chip on" data-v="0">Total da compra</button><button class="chip" data-v="1">Valor da parcela</button></div>
+              </div>
               <small class="muted" id="instTxt"></small></div>`}
             ${rec ? `<div class="field"><span>Repetir</span><div class="rec-box">${G.icon('repeat', 18)}<span><b>Conta fixa</b> — ${({ monthly: 'todo mês, dia ' + rec.day, weekly: 'toda semana', yearly: 'todo ano' })[rec.freq]}${rec.end ? ' · parada' : ''}</span>
               ${rec.end ? '' : '<button class="btn sm ghost" id="stopRec">Parar de repetir</button>'}</div></div>`
@@ -209,10 +217,25 @@
     $('#moreBtn').onclick = () => { moreOpen = !moreOpen; $('#more').classList.toggle('hidden', !moreOpen); $('#moreBtn').classList.toggle('open', moreOpen); };
     const paintInst = () => {
       if (!$('#instN')) return;
+      instCur = Math.min(instCur, installments);
       $('#instN').textContent = installments === 1 ? 'À vista' : installments + 'x';
-      $('#instTxt').textContent = installments > 1 && f.amount ? `${installments} parcelas de ${G.money(Math.floor(f.amount / installments), { force: true })} — uma em cada mês, a partir da data escolhida.` : '';
+      $('#instMore').classList.toggle('hidden', installments === 1);
+      $('#instC').textContent = `${instCur}ª de ${installments}`;
+      G.$$('#instVal .chip', el).forEach((x) => x.classList.toggle('on', (x.dataset.v === '1') === perParcel));
+      const left = installments - instCur + 1;
+      const p = G.money(perParcel ? f.amount : Math.floor(f.amount / installments), { force: true });
+      $('#instTxt').textContent = installments === 1 || !f.amount ? ''
+        : instCur === 1 ? `${installments} parcelas de ${p} — uma em cada mês, a partir da data escolhida.`
+        : `Lança da ${instCur}/${installments} até a ${installments}/${installments}: ${left} parcela(s) de ${p}, a ${instCur}ª na data escolhida e uma por mês depois. As ${instCur - 1} já pagas ficam de fora.`;
     };
     G.$$('[data-s]', el).forEach((b) => (b.onclick = () => { installments = Math.max(1, Math.min(48, installments + Number(b.dataset.s))); if (installments > 1) setRepeat('none'); paintInst(); }));
+    G.$$('[data-c]', el).forEach((b) => (b.onclick = () => {
+      instCur = Math.max(1, Math.min(installments, instCur + Number(b.dataset.c)));
+      // compra antiga: o que se tem na mão é o valor da parcela na fatura
+      if (instCur > 1 && !valTouched) perParcel = true;
+      paintInst();
+    }));
+    G.$$('#instVal .chip', el).forEach((b) => (b.onclick = () => { perParcel = b.dataset.v === '1'; valTouched = true; paintInst(); }));
     const setRepeat = (r) => { repeat = r; G.$$('#rep .chip', el).forEach((x) => x.classList.toggle('on', x.dataset.r === r)); };
     G.$$('#rep .chip', el).forEach((b) => (b.onclick = () => { setRepeat(b.dataset.r); if (repeat !== 'none') { installments = 1; paintInst(); } }));
 
@@ -248,12 +271,14 @@
           G.toast('Salvo — e agora se repete ' + ({ monthly: 'todo mês', weekly: 'toda semana', yearly: 'todo ano' })[repeat]);
         } else G.toast('Alterações salvas');
       } else if (installments > 1) {
-        const group = G.uid(), base = Math.floor(f.amount / installments), first = f.amount - base * (installments - 1);
-        for (let i = 0; i < installments; i++) {
-          const d = G.dateInMonth(G.addMonths(G.monthKey(f.date), i), Number(f.date.slice(8, 10)));
+        const group = G.uid(), base = perParcel ? f.amount : Math.floor(f.amount / installments);
+        const first = perParcel ? f.amount : f.amount - base * (installments - 1);
+        // a data escolhida é a da parcela atual; as anteriores já foram pagas e não entram
+        for (let i = instCur - 1; i < installments; i++) {
+          const d = G.dateInMonth(G.addMonths(G.monthKey(f.date), i - (instCur - 1)), Number(f.date.slice(8, 10)));
           G.addTx({ ...f, amount: i ? base : first, date: d, desc: `${f.desc || G.cat(f.categoryId).name} (${i + 1}/${installments})`, installment: { group, n: i + 1, total: installments } });
         }
-        G.toast(`${installments} parcelas lançadas`);
+        G.toast(instCur > 1 ? `${installments - instCur + 1} parcelas lançadas (da ${instCur}ª à ${installments}ª)` : `${installments} parcelas lançadas`);
       } else {
         const tx = G.addTx({ ...f });
         if (repeat !== 'none') {
