@@ -3,7 +3,9 @@
 (function (G) {
   G.openTx = (id) => {
     const t = G.state.tx.find((x) => x.id === id);
-    if (t) G.openAdd({ edit: t });
+    if (!t) return;
+    if (t.installment && G.planOf(t.installment.group).length > 1) G.openPlan(t.installment.group);
+    else G.openAdd({ edit: t });
   };
 
   function payBanner(t) {
@@ -42,8 +44,11 @@
     if (!isEdit && f.pending == null) f.pending = f.date > G.today();
     const rec = isEdit && edit.recurringId ? G.state.recurring.find((r) => r.id === edit.recurringId) : null;
     // status escolhido à mão não muda sozinho quando a data muda
-    // compra parcelada que começou antes do app: parcela atual + se o valor digitado é o total ou a parcela
+    // compra parcelada que começou antes do app: parcelas já pagas + se o valor digitado é o total ou a parcela
     let instCur = 1, perParcel = false;
+    // fatura escolhida à mão não muda sozinha quando a data muda
+    let invTouched = !!f.invoice;
+    const isCredit = () => f.type === 'expense' && G.acc(f.accountId).type === 'credit';
     let installments = 1, repeat = 'none', catTouched = isEdit || !!f.categoryId, moreOpen = !!(f.notes) || (isEdit && !rec && !edit.installment), statusTouched = isEdit;
 
     const s = G.sheet(`
@@ -60,6 +65,7 @@
           <div class="keypad" id="keypad">${['1', '2', '3', '4', '5', '6', '7', '8', '9', '00', '0', '⌫'].map((k) => `<button data-k="${k}">${k === '⌫' ? G.icon('left', 22) : k}</button>`).join('')}</div>
         </div>
         <div class="add-right">
+          ${isEdit && edit.installment ? `<div class="plan-banner">${G.icon('card', 18)}<span>Parcela <b>${edit.installment.n} de ${edit.installment.total}</b> — o que mudar aqui vale só para ela.</span><button class="btn sm ghost" id="openPlan">Compra inteira</button></div>` : ''}
           ${isEdit && edit.pending ? payBanner(edit) : ''}
           ${isEdit && !edit.pending && edit.due && edit.due !== edit.date ? `<div class="info-box">${G.icon('check', 18)}<span>Pago em ${G.shortDate(edit.date)} — o vencimento era ${G.shortDate(edit.due)}${edit.date < edit.due ? ` (${G.daysBetween(edit.date, edit.due)} dia(s) antes)` : edit.date > edit.due ? ` (${G.daysBetween(edit.due, edit.date)} dia(s) depois)` : ''}.</span></div>` : ''}
           <div class="desc-wrap"><input id="desc" class="desc-input" placeholder="Descrição (ex.: Padaria, Uber, Salário)" autocomplete="off" maxlength="80" value="${G.esc(f.desc)}">
@@ -71,19 +77,25 @@
           <div class="chips" id="dates"><button class="chip" data-d="0">Hoje</button><button class="chip" data-d="-1">Ontem</button>
             <label class="chip date-chip">${G.icon('calendar', 16)}<span id="dateTxt"></span><input type="date" id="dateIn"></label></div>
           <div class="seg wide status-seg" id="status"><button data-p="0"></button><button data-p="1"></button></div>
+          <div id="ccSec" class="cc-sec hidden">
+            <div class="sec-label" id="invLabel">Entra na fatura</div>
+            <div class="inv-pick" id="invPick"></div>
+            <div class="cc-warn hidden" id="invWarn"></div>
+            <div id="ccInst"></div>
+          </div>
           ${f.splits && f.splits.length ? `<div class="sec-label">Itens da nota</div><div class="split-list">${f.splits.map((sp) => `<div class="split-line">${G.catBadge(G.cat(sp.categoryId), 28)}<span>${G.esc(G.cat(sp.categoryId).name)}</span><b>${G.money(sp.amount)}</b></div>`).join('')}</div>` : ''}
           <button class="more-toggle" id="moreBtn">${G.icon('down', 18)} Mais opções</button>
           <div id="more" class="${moreOpen ? '' : 'hidden'}">
             <label class="field"><span>Observação</span><textarea id="notes" rows="2" placeholder="Opcional">${G.esc(f.notes || '')}</textarea></label>
-            ${isEdit ? '' : `<div class="field" id="instSec"><span>Parcelado no cartão?</span>
+            <div id="instHome">${isEdit ? '' : `<div class="field" id="instSec"><span>Parcelas</span>
               <div class="stepper"><button data-s="-1">${G.icon('minus', 18)}</button><b id="instN">À vista</b><button data-s="1">${G.icon('plus', 18)}</button></div>
               <div id="instMore" class="hidden">
-                <span class="inst-sub">Próxima parcela a pagar</span>
-                <div class="stepper"><button data-c="-1">${G.icon('minus', 18)}</button><b id="instC">1ª</b><button data-c="1">${G.icon('plus', 18)}</button></div>
-                <span class="inst-sub">O valor digitado é</span>
-                <div class="chips" id="instVal"><button class="chip on" data-v="0">Total da compra</button><button class="chip" data-v="1">Valor da parcela</button></div>
+                <span class="inst-sub">O valor que você digitou é</span>
+                <div class="chips" id="instVal"><button class="chip on" data-v="0">O total da compra</button><button class="chip" data-v="1">O valor de cada parcela</button></div>
+                <span class="inst-sub">Compra antiga? Parcelas que você já pagou</span>
+                <div class="stepper"><button data-c="-1">${G.icon('minus', 18)}</button><b id="instC">nenhuma</b><button data-c="1">${G.icon('plus', 18)}</button></div>
               </div>
-              <small class="muted" id="instTxt"></small></div>`}
+              <div class="inst-plan" id="instPlan"></div></div>`}</div>
             ${rec ? `<div class="field"><span>Repetir</span><div class="rec-box">${G.icon('repeat', 18)}<span><b>Conta fixa</b> — ${({ monthly: 'todo mês, dia ' + rec.day, weekly: 'toda semana', yearly: 'todo ano' })[rec.freq]}${rec.end ? ' · parada' : ''}</span>
               ${rec.end ? '' : '<button class="btn sm ghost" id="stopRec">Parar de repetir</button>'}</div></div>`
             : isEdit && edit.installment ? '' : `<div class="field"><span>Repetir</span><div class="chips" id="rep">
@@ -107,8 +119,7 @@
       $('#catSec').classList.toggle('hidden', f.type === 'transfer');
       $('#toSec').classList.toggle('hidden', f.type !== 'transfer');
       $('#accLabel').textContent = f.type === 'transfer' ? 'De' : f.type === 'income' ? 'Entrou em' : 'Saiu de';
-      const inst = $('#instSec'); if (inst) inst.classList.toggle('hidden', f.type !== 'expense');
-      renderCats(); renderAccs();
+      renderCats(); renderAccs(); paintCC(); paintInst();
     };
     G.$$('#seg button', el).forEach((b) => (b.onclick = () => {
       if (f.type === b.dataset.t) return;
@@ -182,7 +193,7 @@
     // ---------- contas ----------
     const renderAccs = () => {
       const a = $('#accs'); a.innerHTML = '';
-      a.appendChild(G.accountChips(f.accountId, (id) => { f.accountId = id; if (f.toAccountId === id) f.toAccountId = null; renderAccs(); paintInst(); }));
+      a.appendChild(G.accountChips(f.accountId, (id) => { f.accountId = id; if (f.toAccountId === id) f.toAccountId = null; renderAccs(); paintCC(); paintInst(); }));
       if (f.type === 'transfer') {
         const b = $('#toAccs'); b.innerHTML = '';
         b.appendChild(G.accountChips(f.toAccountId, (id) => (f.toAccountId = id), { exclude: f.accountId }));
@@ -199,14 +210,48 @@
       $('#dateIn').value = f.date;
       // data futura = ainda vai acontecer: entra como "a pagar" até você marcar como pago
       if (!statusTouched) f.pending = f.date > t;
-      paintStatus(); paintInst();
+      paintStatus(); paintCC(); paintInst();
     };
     const paintStatus = () => {
       const inc = f.type === 'income';
       const [a, b] = G.$$('#status button', el);
       a.textContent = inc ? 'Recebido' : 'Pago'; b.textContent = inc ? 'A receber' : 'A pagar';
       a.classList.toggle('on', !f.pending); b.classList.toggle('on', !!f.pending);
-      $('#dateLabel').textContent = f.pending ? 'Vencimento' : (inc ? 'Recebido em' : f.type === 'transfer' ? 'Data' : 'Pago em');
+      $('#dateLabel').textContent = isCredit() ? 'Data da compra' : f.pending ? 'Vencimento' : (inc ? 'Recebido em' : f.type === 'transfer' ? 'Data' : 'Pago em');
+    };
+
+    // ---------- cartão de crédito: a fatura é escolhida, não adivinhada ----------
+    const paintCC = () => {
+      const on = isCredit();
+      $('#ccSec').classList.toggle('hidden', !on);
+      // compra no cartão não é "paga" nem "a pagar": quem se paga é a fatura
+      $('#status').classList.toggle('hidden', on);
+      if (on) f.pending = false;
+      else if (!statusTouched) f.pending = f.date > G.today();
+      const inst = $('#instSec');
+      if (inst) {
+        const home = on ? $('#ccInst') : $('#instHome');
+        if (inst.parentElement !== home) home.appendChild(inst);
+        inst.classList.toggle('hidden', f.type !== 'expense');
+      }
+      paintStatus();
+      if (!on) return;
+      const acc = G.acc(f.accountId), auto = G.invoiceKey(acc, f.date), thisYear = G.today().slice(0, 4);
+      if (!invTouched || !f.invoice) f.invoice = auto;
+      const keys = [-1, 0, 1, 2].map((i) => G.addMonths(auto, i));
+      if (!keys.includes(f.invoice)) keys.push(f.invoice);
+      keys.sort();
+      $('#invPick').innerHTML = keys.map((k) => {
+        const inv = G.invoice(acc.id, k);
+        return `<button class="inv-opt ${k === f.invoice ? 'on' : ''}" data-k="${k}"><b>${G.cap(G.monthAbbr(k))}${k.slice(0, 4) !== thisYear ? ' ' + k.slice(2, 4) : ''}</b>
+          <small>vence ${G.shortDate(inv.due)}</small><em class="st-${inv.status}">${inv.label}</em></button>`;
+      }).join('');
+      G.$$('#invPick [data-k]', el).forEach((b) => (b.onclick = () => { f.invoice = b.dataset.k; invTouched = true; paintCC(); paintInst(); }));
+      const inv = G.invoice(acc.id, f.invoice), mes = G.monthName(f.invoice, false), w = $('#invWarn');
+      const msg = inv.status === 'paid' ? `A fatura de ${mes} já foi paga. Se entrar nela, vai sobrar um valor a pagar nessa fatura.`
+        : inv.status === 'open' ? '' : `A fatura de ${mes} já fechou em ${G.shortDate(inv.closing)}. Compra feita depois do fechamento vai para a fatura seguinte.`;
+      w.innerHTML = msg ? `${G.icon('alert', 16)}<span>${msg}</span>` : '';
+      w.classList.toggle('hidden', !msg);
     };
     G.$$('#status button', el).forEach((b) => (b.onclick = () => { f.pending = b.dataset.p === '1'; statusTouched = true; paintStatus(); }));
     G.$$('#dates [data-d]', el).forEach((b) => (b.onclick = () => { f.date = G.addDays(G.today(), Number(b.dataset.d)); paintDate(); }));
@@ -215,25 +260,37 @@
 
     // ---------- mais opções ----------
     $('#moreBtn').onclick = () => { moreOpen = !moreOpen; $('#more').classList.toggle('hidden', !moreOpen); $('#moreBtn').classList.toggle('open', moreOpen); };
+    // as parcelas que serão lançadas: uma por mês e, no cartão, uma por fatura a partir da escolhida
+    const planRows = () => {
+      const base = perParcel ? f.amount : Math.floor(f.amount / installments);
+      const first = perParcel ? f.amount : f.amount - base * (installments - 1);
+      const day = Number(f.date.slice(8, 10)), credit = isCredit(), out = [];
+      for (let i = instCur - 1; i < installments; i++) {
+        const off = i - (instCur - 1);
+        out.push({ n: i + 1, amount: i ? base : first, date: G.dateInMonth(G.addMonths(G.monthKey(f.date), off), day), invoice: credit ? G.addMonths(f.invoice, off) : null });
+      }
+      return out;
+    };
     const paintInst = () => {
+      if (isCredit() && $('#invLabel')) $('#invLabel').textContent = installments > 1 ? `A ${instCur}ª parcela entra na fatura` : 'Entra na fatura';
       if (!$('#instN')) return;
       instCur = Math.min(instCur, installments);
       $('#instN').textContent = installments === 1 ? 'À vista' : installments + 'x';
       $('#instMore').classList.toggle('hidden', installments === 1);
-      $('#instC').textContent = `${instCur}ª de ${installments}`;
+      $('#instC').textContent = instCur === 1 ? 'nenhuma' : `${instCur - 1} de ${installments}`;
       G.$$('#instVal .chip', el).forEach((x) => x.classList.toggle('on', (x.dataset.v === '1') === perParcel));
-      const left = installments - instCur + 1;
-      const pv = perParcel ? f.amount : Math.floor(f.amount / installments);
-      const p = G.money(pv, { force: true }), tot = G.money(perParcel ? f.amount * installments : f.amount, { force: true });
-      $('#instTxt').innerHTML = installments === 1 || !f.amount ? ''
-        : instCur === 1 ? `${installments} parcelas de <b>${p}</b> (compra de ${tot}) — uma em cada mês, a partir da data escolhida.`
-        : `Cada parcela: <b>${p}</b> · compra inteira: <b>${tot}</b>.<br>Lança da ${instCur}/${installments} até a ${installments}/${installments} (${left} parcela(s)), a ${instCur}ª na data escolhida e uma por mês depois. As ${instCur - 1} já pagas ficam de fora.`;
-      // no cartão, diz em qual fatura a primeira parcela cai — é aí que se vê se ela já foi paga
-      const acc = G.acc(f.accountId);
-      if (installments > 1 && f.amount && acc && acc.type === 'credit') {
-        const key = G.invoiceKey(acc, f.date);
-        $('#instTxt').innerHTML += `<br><b>A ${instCur}ª entra na fatura de ${G.monthName(key, false)}</b> (vence ${G.shortDate(G.invoiceDue(acc, key))}). Se essa fatura já foi paga com ela dentro, avance a data um mês.`;
-      }
+      const plan = $('#instPlan');
+      if (installments === 1) { plan.innerHTML = ''; return; }
+      if (!f.amount) { plan.innerHTML = '<small class="muted">Digite o valor para ver as parcelas.</small>'; return; }
+      const rows = planRows(), credit = isCredit(), acc = G.acc(f.accountId);
+      const per = rows[rows.length - 1].amount, tot = perParcel ? f.amount * installments : f.amount;
+      const line = (r) => `<div class="ip-row"><span class="pill">${r.n}/${installments}</span>
+        <span class="ip-when">${credit ? `Fatura de ${G.monthName(r.invoice)}<small>vence ${G.shortDate(G.invoiceDue(acc, r.invoice))}</small>` : `${G.cap(G.monthName(G.monthKey(r.date)))}<small>${G.shortDate(r.date)}</small>`}</span>
+        <b>${G.money(r.amount, { force: true })}</b></div>`;
+      const show = rows.length <= 5 ? rows : [...rows.slice(0, 3), null, rows[rows.length - 1]];
+      plan.innerHTML = `<div class="ip-head"><b>${installments}x de ${G.money(per, { force: true })}</b><span>compra de ${G.money(tot, { force: true })}</span></div>
+        ${show.map((r) => (r ? line(r) : `<div class="ip-gap">+ ${rows.length - 4} parcela(s)</div>`)).join('')}
+        <div class="ip-foot">${instCur > 1 ? `Serão lançadas ${rows.length} parcelas (da ${instCur}ª à ${installments}ª). As ${instCur - 1} já pagas ficam de fora.` : `Serão lançadas as ${rows.length} parcelas.`}</div>`;
     };
     G.$$('[data-s]', el).forEach((b) => (b.onclick = () => { installments = Math.max(1, Math.min(48, installments + Number(b.dataset.s))); if (installments > 1) setRepeat('none'); paintInst(); }));
     G.$$('[data-c]', el).forEach((b) => (b.onclick = () => {
@@ -258,6 +315,8 @@
       if (f.type === 'transfer') f.categoryId = null;
       if (f.pending) f.due = f.date;
       else if (isEdit && edit.pending) f.due = edit.date;
+      const credit = isCredit();
+      if (credit) { f.pending = false; delete f.due; } else delete f.invoice;
       if (!f.pending) delete f.pending;
       G.state.settings.lastAccount = f.accountId;
       if (isEdit) {
@@ -269,6 +328,7 @@
         G.updateTx(edit.id, f);
         const t = G.state.tx.find((x) => x.id === edit.id);
         if (!f.pending) delete t.pending;
+        if (credit) delete t.due; else delete t.invoice;
         if (repeat !== 'none' && !t.recurringId) {
           // virou conta fixa depois de lançado: este lançamento é a primeira ocorrência
           const r = { id: G.uid(), type: f.type, amount: f.amount, desc: (f.desc || G.cat(f.categoryId).name).replace(/\s*\(\d+\/\d+\)$/, ''), categoryId: f.categoryId, accountId: f.accountId, toAccountId: f.toAccountId, freq: repeat, day: Number((f.due || f.date).slice(8, 10)), start: f.due || f.date, done: { [f.due || f.date]: t.id } };
@@ -276,12 +336,13 @@
           G.toast('Salvo — e agora se repete ' + ({ monthly: 'todo mês', weekly: 'toda semana', yearly: 'todo ano' })[repeat]);
         } else G.toast('Alterações salvas');
       } else if (installments > 1) {
-        const group = G.uid(), base = perParcel ? f.amount : Math.floor(f.amount / installments);
-        const first = perParcel ? f.amount : f.amount - base * (installments - 1);
-        // a data escolhida é a da parcela atual; as anteriores já foram pagas e não entram
-        for (let i = instCur - 1; i < installments; i++) {
-          const d = G.dateInMonth(G.addMonths(G.monthKey(f.date), i - (instCur - 1)), Number(f.date.slice(8, 10)));
-          G.addTx({ ...f, amount: i ? base : first, date: d, desc: `${f.desc || G.cat(f.categoryId).name} (${i + 1}/${installments})`, installment: { group, n: i + 1, total: installments } });
+        const group = G.uid(), name = f.desc || G.cat(f.categoryId).name, today = G.today();
+        // no cartão cada parcela leva a SUA fatura gravada; fora dele, parcela futura entra como a pagar
+        for (const r of planRows()) {
+          const tx = { ...f, amount: r.amount, date: r.date, desc: `${name} (${r.n}/${installments})`, installment: { group, n: r.n, total: installments } };
+          if (r.invoice) tx.invoice = r.invoice;
+          else if (r.date > today) { tx.pending = true; tx.due = r.date; } else { delete tx.pending; delete tx.due; }
+          G.addTx(tx);
         }
         G.toast(instCur > 1 ? `${installments - instCur + 1} parcelas lançadas (da ${instCur}ª à ${installments}ª)` : `${installments} parcelas lançadas`);
       } else {
@@ -314,39 +375,8 @@
         rec.end = G.today(); G.save(); s.close(); G.render(); G.toast('Não se repete mais');
       };
       G.bindPayBanner(el, edit, s);
-      if (edit.installment) {
-        const sibs = () => G.state.tx.filter((t) => t.installment && t.installment.group === edit.installment.group);
-        el.querySelector('.add-foot').insertAdjacentHTML('afterbegin', `<small class="muted foot-note">Parcela ${edit.installment.n} de ${edit.installment.total} — "Salvar" vale só para esta parcela.</small>
-          <div class="inst-all"><span class="muted">Mover a compra inteira:</span><button class="btn sm ghost" data-mv="-1">${G.icon('left', 16)} 1 mês</button><button class="btn sm ghost" data-mv="1">1 mês ${G.icon('right', 16)}</button></div>
-          <div class="inst-all"><button class="btn sm ghost" id="instAllVal">Usar este valor em todas (${sibs().length})</button><button class="btn sm ghost danger-text" id="instAllDel">Apagar a compra inteira</button></div>`);
-        $('#instAllVal').onclick = async () => {
-          if (!validate()) return;
-          const n = sibs().length;
-          if (!(await G.confirm('Corrigir todas as parcelas?', `As ${n} parcelas lançadas desta compra passam a valer <b>${G.money(f.amount, { force: true })}</b> cada.`, { ok: 'Corrigir todas' }))) return;
-          G.snapshot();
-          sibs().forEach((t) => { t.amount = f.amount; delete t.splits; });
-          G.save(); G.render(); s.close(); G.toast(`${n} parcelas corrigidas`, { undo: true });
-        };
-        // parcela que caiu numa fatura já paga: empurra todas juntas, mantendo uma por mês
-        G.$$('[data-mv]', el).forEach((b) => (b.onclick = () => {
-          const k = Number(b.dataset.mv), list = sibs(), day = Math.max(...list.map((t) => Number(t.date.slice(8, 10))));
-          G.snapshot();
-          list.forEach((t) => {
-            t.date = G.dateInMonth(G.addMonths(G.monthKey(t.date), k), day);
-            if (t.pending) t.due = t.date;
-          });
-          const first = list.slice().sort((a, b) => a.date.localeCompare(b.date))[0], acc = G.acc(first.accountId);
-          G.save(); G.render(); s.close();
-          G.toast(`${list.length} parcelas movidas ${k > 0 ? 'um mês para frente' : 'um mês para trás'}` + (acc && acc.type === 'credit' ? ` — a ${first.installment.n}ª fica na fatura de ${G.monthName(G.invoiceKey(acc, first.date), false)}` : ''), { undo: true });
-        }));
-        $('#instAllDel').onclick = async () => {
-          const n = sibs().length;
-          if (!(await G.confirm('Apagar a compra inteira?', `Apaga as ${n} parcelas lançadas desta compra. Dá para desfazer logo depois.`, { ok: 'Apagar todas', danger: true }))) return;
-          G.snapshot();
-          sibs().forEach((t) => G.removeTx(t.id));
-          G.save(); G.render(); s.close(); G.toast(`${n} parcelas apagadas`, { undo: true, icon: 'trash' });
-        };
-      }
+      const op = $('#openPlan');
+      if (op) op.onclick = () => { s.close(); setTimeout(() => G.openPlan(edit.installment.group), 200); };
     }
 
     paintAmt(); paintType(); paintDate(); paintInst(); paintStatus();

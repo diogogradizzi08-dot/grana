@@ -108,24 +108,134 @@
     };
   };
 
-  // fatura do cartão, mês a mês
+  // fatura do cartão, mês a mês: situação, pagar o que falta, o que já está comprometido nas próximas
   G.openInvoice = (accId, key = null) => {
-    const a = G.acc(accId);
-    key = key || G.currentInvoiceKey(a);
+    const a = G.acc(accId), cur = G.currentInvoiceKey(a);
+    key = key || cur;
     const inv = G.invoice(accId, key);
+    const parc = inv.items.filter((t) => t.installment), single = inv.items.filter((t) => !t.installment);
     const cats = G.byCategory(inv.items, 'expense');
-    const s = G.sheet(`<div class="add-head"><button class="icon-btn" data-close>${G.icon('x')}</button><h3 class="sheet-title" style="margin:0">${G.esc(a.name)}</h3><button class="icon-btn" id="ed">${G.icon('edit')}</button></div>
+    const strip = [-1, 0, 1, 2, 3, 4].map((i) => G.addMonths(cur, i)).map((k) => ({ k, inv: G.invoice(accId, k) }));
+    const max = Math.max(1, ...strip.map((x) => x.inv.total));
+    const stTxt = { open: `Aberta · fecha ${G.shortDate(inv.closing)}`, closed: `Fechada · vence ${G.shortDate(inv.due)}`, late: `Vencida em ${G.shortDate(inv.due)}`, paid: 'Paga', empty: 'Sem compras' }[inv.status];
+    const list = (arr) => `<div class="card flush">${arr.sort((x, y) => y.date.localeCompare(x.date)).map(G.txRow).join('')}</div>`;
+    const s = G.sheet(`<div class="add-head"><button class="icon-btn" data-close>${G.icon('x')}</button><h3 class="sheet-title" style="margin:0">${G.esc(a.name)}</h3><button class="icon-btn" id="ed" title="Fechamento e vencimento">${G.icon('settings')}</button></div>
       <div class="month-switch center-row"><button class="icon-btn" data-m="-1">${G.icon('left')}</button><span class="month-label">Fatura de ${G.monthName(key)}</span><button class="icon-btn" data-m="1">${G.icon('right')}</button></div>
-      <div class="hero card slim" style="--brand:${a.color}"><div class="hero-top"><span>Total da fatura</span><span>vence ${G.shortDate(inv.due)}</span></div><div class="hero-value">${G.money(inv.total)}</div>
-        <div class="hero-sub">Fecha em ${G.shortDate(inv.closing)} · ${inv.items.length} compra(s)</div></div>
-      ${inv.total > 0 ? `<button class="btn primary big wide-btn" id="pay">${G.icon('check', 18)} Pagar fatura</button>` : ''}
-      ${cats.length ? `<div class="sec-label">Por categoria</div>${G.hbars(cats.slice(0, 6).map((c) => ({ label: G.cat(c.categoryId).name, icon: G.cat(c.categoryId).icon, value: c.amount, color: G.cat(c.categoryId).color })))}` : ''}
-      <div class="sec-label">Compras</div><div class="card flush">${inv.items.sort((x, y) => y.date.localeCompare(x.date)).map(G.txRow).join('') || '<div class="empty small">Nenhuma compra nesta fatura.</div>'}</div>`, { wide: true });
-    G.$$('[data-m]', s.el).forEach((b) => (b.onclick = () => { s.close(); setTimeout(() => G.openInvoice(accId, G.addMonths(key, Number(b.dataset.m))), 50); }));
+      <div class="hero card slim" style="--brand:${a.color}">
+        <div class="hero-top"><span class="inv-st st-${inv.status}">${stTxt}</span><span>vence ${G.shortDate(inv.due)}</span></div>
+        <div class="hero-value">${G.money(inv.total)}</div>
+        <div class="hero-sub">${inv.items.length} lançamento(s) · fecha ${G.shortDate(inv.closing)}${inv.paid > 0 && inv.left > 0 ? ` · pago ${G.money(inv.paid)}, falta <b>${G.money(inv.left)}</b>` : ''}</div></div>
+      ${inv.left > 0 ? `<button class="btn primary big wide-btn" id="pay">${G.icon('check', 18)} Pagar ${G.money(inv.left)}</button>`
+        : inv.status === 'paid' ? `<div class="inv-paid">${G.icon('check', 18)} Fatura paga${inv.paid > inv.total ? ` · pago a mais ${G.money(inv.paid - inv.total)}` : ''}</div>` : ''}
+      <button class="btn ghost wide-btn" id="addHere">${G.icon('plus', 18)} Lançar compra nesta fatura</button>
+      <div class="sec-label">Faturas</div>
+      <div class="inv-strip">${strip.map(({ k, inv: x }) => `<button data-k="${k}" class="${k === key ? 'on' : ''} st-${x.status}"><span class="bar"><i style="height:${Math.max(4, (x.total / max) * 100)}%"></i></span>
+        <b>${x.total > 0 ? G.moneyShort(x.total) : '—'}</b><small>${G.cap(G.monthAbbr(k))}</small><em>${x.status === 'paid' ? 'paga' : k === cur ? 'atual' : x.status === 'open' ? '' : x.label}</em></button>`).join('')}</div>
+      <p class="hint">${G.icon('info', 14)} As barras já contam as parcelas das próximas faturas.</p>
+      ${parc.length ? `<div class="sec-label">Parcelas (${parc.length}) · ${G.money(G.sum(parc, (t) => t.amount))}</div>${list(parc)}` : ''}
+      ${single.length ? `<div class="sec-label">Compras (${single.length}) · ${G.money(G.sum(single, (t) => t.amount))}</div>${list(single)}` : ''}
+      ${!inv.items.length ? '<div class="card"><div class="empty small">Nenhuma compra nesta fatura.</div></div>' : ''}
+      ${cats.length > 1 ? `<div class="sec-label">Por categoria</div>${G.hbars(cats.slice(0, 6).map((c) => ({ label: G.cat(c.categoryId).name, icon: G.cat(c.categoryId).icon, value: c.amount, color: G.cat(c.categoryId).color })))}` : ''}`, { wide: true });
+    const go = (k) => { s.close(); setTimeout(() => G.openInvoice(accId, k), 50); };
+    G.$$('[data-m]', s.el).forEach((b) => (b.onclick = () => go(G.addMonths(key, Number(b.dataset.m)))));
+    G.$$('.inv-strip [data-k]', s.el).forEach((b) => (b.onclick = () => { if (b.dataset.k !== key) go(b.dataset.k); }));
     s.el.querySelector('#ed').onclick = () => { s.close(); G.editAccount(a); };
+    s.el.querySelector('#addHere').onclick = () => { s.close(); setTimeout(() => G.openAdd({ type: 'expense', preset: { accountId: accId, invoice: key } }), 200); };
     const pay = s.el.querySelector('#pay');
-    if (pay) pay.onclick = () => { s.close(); G.openAdd({ type: 'transfer', preset: { amount: inv.total, toAccountId: accId, desc: `Fatura ${a.name} ${G.monthName(key, false)}`, accountId: (G.activeAccounts().find((x) => x.type === 'checking') || {}).id, date: G.today() } }); };
+    // o pagamento leva a fatura gravada: não depende mais da data cair "perto" do vencimento
+    if (pay) pay.onclick = () => { s.close(); G.openAdd({ type: 'transfer', preset: { amount: inv.left, toAccountId: accId, payInvoice: key, desc: `Fatura ${a.name} ${G.monthName(key, false)}`, accountId: (G.activeAccounts().find((x) => x.type === 'checking') || {}).id, date: G.today() } }); };
     G.bindTxRows(s.el);
+  };
+
+  // ======================= COMPRA PARCELADA =======================
+  G.openPlan = (group) => {
+    const list = G.planOf(group);
+    if (!list.length) return;
+    const t0 = list[0], acc = G.acc(t0.accountId), total = t0.installment.total, credit = acc.type === 'credit' && t0.type === 'expense';
+    const name = (t0.desc || '').replace(/\s*\(\d+\/\d+\)$/, '') || G.cat(t0.categoryId).name;
+    const before = t0.installment.n - 1;
+    const st = list.map((t) => ({ t, s: G.parcelStatus(t), key: credit ? G.txInvoiceKey(acc, t) : null }));
+    const open = st.filter((x) => x.s[0] !== 'paid'), done = before + st.length - open.length;
+    const per = list[list.length - 1].amount, next = open[0];
+    const reopen = () => setTimeout(() => G.openPlan(group), 220);
+    const s = G.sheet(`<div class="add-head"><button class="icon-btn" data-close>${G.icon('x')}</button><h3 class="sheet-title" style="margin:0">Compra parcelada</h3><button class="icon-btn danger-text" id="pDel" title="Apagar a compra">${G.icon('trash')}</button></div>
+      <div class="plan-hero card" style="--c:${acc.color}">
+        <div class="ph-top">${G.catBadge(G.cat(t0.categoryId), 46)}<div><b>${G.esc(name)}</b><small>${G.esc(G.cat(t0.categoryId).name)} · ${G.esc(acc.name)}</small></div></div>
+        <div class="ph-nums"><div><small>Parcela</small><b>${G.money(per)}</b></div><div><small>Parcelas</small><b>${total}x</b></div><div><small>Falta pagar</small><b>${G.money(G.sum(open, (x) => x.t.amount))}</b></div></div>
+        ${G.progress(done / total)}
+        <small class="ph-sub">${done} de ${total} pagas${before ? ` (${before} antes do app)` : ''}${next ? ` · próxima: ${next.t.installment.n}/${total} ${credit ? 'na fatura de ' + G.monthName(next.key, false) : 'em ' + G.shortDate(next.t.date)}` : ' · quitada'}</small>
+      </div>
+      <div class="plan-actions">
+        <button class="plan-act" id="pVal">${G.icon('edit', 20)}<span>Valor da parcela</span></button>
+        <button class="plan-act" id="pInfo">${G.icon('tag', 20)}<span>Nome e categoria</span></button>
+      </div>
+      <div class="plan-move"><span>${credit ? 'Todas as parcelas para a fatura' : 'Todas as parcelas para o mês'}</span>
+        <div><button class="btn sm ghost" data-mv="-1">${G.icon('left', 16)} anterior</button><button class="btn sm ghost" data-mv="1">seguinte ${G.icon('right', 16)}</button></div></div>
+      <div class="sec-label">Parcelas</div>
+      <div class="card flush plan-list">
+        ${before ? `<div class="pl-row ghost"><span class="pill">${before === 1 ? '1' : '1–' + before}/${total}</span><span class="pl-mid"><b>Pagas antes de usar o app</b><small>não entram nas contas</small></span><span></span><span></span></div>` : ''}
+        ${st.map(({ t, s: ps, key }) => `<button class="pl-row" data-id="${t.id}"><span class="pill">${t.installment.n}/${total}</span>
+          <span class="pl-mid"><b>${credit ? 'Fatura de ' + G.monthName(key) : G.cap(G.monthName(G.monthKey(t.date)))}</b><small>${credit ? 'vence ' + G.shortDate(G.invoiceDue(acc, key)) : G.shortDate(t.date)}</small></span>
+          <span class="pl-st st-${ps[0]}">${ps[1]}</span><b class="pl-amt">${G.money(t.amount)}</b></button>`).join('')}
+      </div>
+      <p class="hint">${G.icon('info', 14)} Toque numa parcela para mudar só ela — o valor, a fatura ou apagar.</p>`, { wide: true });
+    const el = s.el;
+    G.$$('.pl-row[data-id]', el).forEach((b) => (b.onclick = () => { s.close(); setTimeout(() => G.openAdd({ edit: G.state.tx.find((x) => x.id === b.dataset.id) }), 200); }));
+    // mover a compra inteira: cada parcela vai uma fatura (um mês) para o lado, todas juntas
+    G.$$('[data-mv]', el).forEach((b) => (b.onclick = () => {
+      const k = Number(b.dataset.mv), day = Math.max(...list.map((t) => Number(t.date.slice(8, 10))));
+      G.snapshot();
+      for (const t of list) {
+        if (credit) t.invoice = G.addMonths(G.txInvoiceKey(acc, t), k);
+        t.date = G.dateInMonth(G.addMonths(G.monthKey(t.date), k), day);
+        if (t.pending) t.due = t.date;
+      }
+      G.save(); G.render(); s.close(); reopen();
+      G.toast(credit ? `A ${list[0].installment.n}ª parcela agora está na fatura de ${G.monthName(list[0].invoice, false)}` : 'Parcelas movidas', { undo: true });
+    }));
+    el.querySelector('#pVal').onclick = () => {
+      const unpaid = open.length;
+      const v = G.sheet(`<h3 class="sheet-title">Valor da parcela</h3>
+        <p class="muted">${G.esc(name)} · ${total}x</p>
+        <label class="field"><span>Cada parcela vale</span><input id="pv" inputmode="decimal" value="${(per / 100).toFixed(2).replace('.', ',')}"></label>
+        <div class="field"><span>Mudar em</span><div class="chips" id="pw"><button class="chip on" data-w="all">Todas (${list.length})</button>${unpaid && unpaid < list.length ? `<button class="chip" data-w="open">Só as que faltam (${unpaid})</button>` : ''}</div></div>
+        <p class="muted small" id="pvTot"></p>
+        <div class="row-btns"><button class="btn ghost" data-close>Cancelar</button><button class="btn primary" id="ok">Salvar</button></div>`);
+      let who = 'all';
+      const tot = () => { const n = G.parseMoney(v.el.querySelector('#pv').value); v.el.querySelector('#pvTot').textContent = n ? `A compra inteira passa a valer ${G.money(n * total, { force: true })} (${total}x de ${G.money(n, { force: true })}).` : ''; };
+      v.el.querySelector('#pv').oninput = tot; tot();
+      G.$$('#pw .chip', v.el).forEach((c) => (c.onclick = () => { who = c.dataset.w; G.$$('#pw .chip', v.el).forEach((x) => x.classList.toggle('on', x === c)); }));
+      v.el.querySelector('#ok').onclick = () => {
+        const n = G.parseMoney(v.el.querySelector('#pv').value);
+        if (!n) return;
+        G.snapshot();
+        const target = who === 'open' ? open.map((x) => x.t) : list;
+        target.forEach((t) => { t.amount = n; delete t.splits; });
+        G.save(); G.render(); v.close(); s.close(); reopen();
+        G.toast(`${target.length} parcela(s) com ${G.money(n, { force: true })}`, { undo: true });
+      };
+    };
+    el.querySelector('#pInfo').onclick = () => {
+      let cat = t0.categoryId;
+      const v = G.sheet(`<h3 class="sheet-title">Nome e categoria</h3>
+        <label class="field"><span>Nome da compra</span><input id="pn" value="${G.esc(name)}" maxlength="70"></label>
+        <div class="sec-label">Categoria</div><div id="pc"></div>
+        <div class="row-btns"><button class="btn ghost" data-close>Cancelar</button><button class="btn primary" id="ok">Salvar em todas</button></div>`, { wide: true });
+      v.el.querySelector('#pc').appendChild(G.catGrid('expense', cat, (id) => (cat = id), { compact: true }));
+      v.el.querySelector('#ok').onclick = () => {
+        const nm = v.el.querySelector('#pn').value.trim() || name;
+        G.snapshot();
+        list.forEach((t) => { t.desc = `${nm} (${t.installment.n}/${total})`; t.categoryId = cat; delete t.splits; });
+        G.learn(nm, cat, 'expense');
+        G.save(); G.render(); v.close(); s.close(); reopen(); G.toast('Compra atualizada', { undo: true });
+      };
+    };
+    el.querySelector('#pDel').onclick = async () => {
+      if (!(await G.confirm('Apagar a compra inteira?', `Apaga as ${list.length} parcelas lançadas de "${G.esc(name)}". Dá para desfazer logo depois.`, { ok: 'Apagar todas', danger: true }))) return;
+      G.snapshot();
+      G.removeTx(list.map((t) => t.id));
+      G.save(); G.render(); s.close(); G.toast(`${list.length} parcelas apagadas`, { undo: true, icon: 'trash' });
+    };
   };
 
   // ======================= ORÇAMENTO =======================

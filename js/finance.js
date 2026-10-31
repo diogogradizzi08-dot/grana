@@ -79,9 +79,8 @@
         const key = G.addMonths(G.currentInvoiceKey(a), i);
         const inv = G.invoice(a.id, key);
         if (inv.due <= today || inv.due > end || inv.total <= 0) continue;
-        const paid = G.sum(G.state.tx.filter((t) => t.type === 'transfer' && t.toAccountId === a.id && !t.pending && t.date > G.addDays(inv.closing, -10) && t.date <= inv.due), (t) => t.amount);
-        const scheduled = items.some((x) => x.tx && x.tx.type === 'transfer' && x.tx.toAccountId === a.id && x.origDate > G.addDays(inv.closing, -10) && x.origDate <= inv.due);
-        const left = inv.total - paid;
+        const scheduled = items.some((x) => x.tx && x.tx.type === 'transfer' && x.tx.toAccountId === a.id && (x.tx.payInvoice ? x.tx.payInvoice === key : x.origDate > G.addDays(inv.closing, -10) && x.origDate <= inv.due));
+        const left = inv.total - inv.paid;
         if (left > 0 && !scheduled) items.push({ kind: inv.closing > today ? 'invoice-open' : 'invoice', date: inv.due, origDate: inv.due, value: -left, desc: `Fatura ${a.name} (${G.monthName(key, false)})`, account: a, invoiceKey: key });
       }
     }
@@ -112,11 +111,55 @@
     const due = acc.dueDay || 10, close = acc.closingDay || 1;
     return G.dateInMonth(due > close ? key : G.addMonths(key, 1), due);
   };
+  G.invoiceClosing = (acc, key) => G.dateInMonth(key, acc.closingDay || 1);
+  // a fatura de um lançamento: a GRAVADA nele (compras novas e parcelas) ou, nos antigos, a calculada pela data.
+  // Gravar é o que deixa cada parcela numa fatura certa, uma por mês, sem o dia de fechamento embaralhar.
+  G.txInvoiceKey = (acc, t) => t.invoice || G.invoiceKey(acc, t.date);
+  // pagamento ligado à fatura (payInvoice); os antigos, sem ligação, valem pela janela do fechamento ao vencimento
+  G.invoicePaid = (accId, key) => {
+    const acc = G.acc(accId), closing = G.invoiceClosing(acc, key), due = G.invoiceDue(acc, key);
+    return G.sum(G.state.tx.filter((t) => t.type === 'transfer' && t.toAccountId === accId && !t.pending
+      && (t.payInvoice ? t.payInvoice === key : t.date > G.addDays(closing, -10) && t.date <= due)), (t) => t.amount);
+  };
   G.invoice = (accId, key) => {
-    const acc = G.acc(accId);
-    const items = G.state.tx.filter((t) => t.accountId === accId && t.type === 'expense' && G.invoiceKey(acc, t.date) === key);
-    const credits = G.state.tx.filter((t) => t.accountId === accId && t.type === 'income' && G.invoiceKey(acc, t.date) === key);
-    return { key, items, total: G.sum(items, (t) => t.amount) - G.sum(credits, (t) => t.amount), due: G.invoiceDue(acc, key), closing: G.dateInMonth(key, acc.closingDay || 1) };
+    const acc = G.acc(accId), today = G.today();
+    const mine = G.state.tx.filter((t) => t.accountId === accId && (t.type === 'expense' || t.type === 'income') && G.txInvoiceKey(acc, t) === key);
+    const items = mine.filter((t) => t.type === 'expense'), credits = mine.filter((t) => t.type === 'income');
+    const total = G.sum(items, (t) => t.amount) - G.sum(credits, (t) => t.amount);
+    const closing = G.invoiceClosing(acc, key), due = G.invoiceDue(acc, key), paid = G.invoicePaid(accId, key);
+    const left = Math.max(0, total - paid);
+    // aberta: ainda recebe compras · fechada: valor fechado, a pagar · vencida · paga
+    const status = total > 0 && left <= 0 ? 'paid' : today <= closing ? 'open' : total <= 0 ? 'empty' : today > due ? 'late' : 'closed';
+    return { key, items, credits, total, due, closing, paid, left, status, label: G.INVOICE_LABEL[status] };
+  };
+  G.INVOICE_LABEL = { open: 'aberta', closed: 'fechada', late: 'vencida', paid: 'paga', empty: 'sem compras' };
+  G.planOf = (group) => G.state.tx.filter((t) => t.installment && t.installment.group === group).sort((a, b) => a.installment.n - b.installment.n);
+  // situação de uma parcela, para a lista da compra parcelada
+  G.parcelStatus = (t) => {
+    const acc = G.acc(t.accountId);
+    if (acc.type === 'credit' && t.type === 'expense') {
+      const key = G.txInvoiceKey(acc, t), inv = G.invoice(acc.id, key);
+      if (inv.status === 'paid') return ['paid', 'paga'];
+      if (inv.status === 'late') return ['late', 'fatura vencida'];
+      if (inv.status === 'closed') return ['due', 'a pagar'];
+      return key === G.currentInvoiceKey(acc) ? ['open', 'fatura atual'] : ['future', 'futura'];
+    }
+    if (t.pending) return t.date < G.today() ? ['late', 'atrasada'] : ['future', 'a pagar'];
+    return t.date > G.today() ? ['future', 'agendada'] : ['paid', 'paga'];
+  };
+  // parcelas antigas no cartão iam para a fatura pela data, e o dia de fechamento embaralhava
+  // (duas parcelas na mesma fatura, um mês pulado). Grava a fatura de cada uma: uma por mês, a partir da primeira.
+  G.migrateInvoices = () => {
+    if ((G.state.settings.invoiceModel || 0) >= 1) return false;
+    const groups = {};
+    for (const t of G.state.tx) if (t.installment && !t.invoice && t.type === 'expense' && G.acc(t.accountId).type === 'credit') (groups[t.installment.group] = groups[t.installment.group] || []).push(t);
+    for (const list of Object.values(groups)) {
+      list.sort((a, b) => a.installment.n - b.installment.n);
+      const acc = G.acc(list[0].accountId), k0 = G.invoiceKey(acc, list[0].date), n0 = list[0].installment.n;
+      list.forEach((t) => { t.invoice = G.addMonths(k0, t.installment.n - n0); delete t.pending; });
+    }
+    G.state.settings.invoiceModel = 1;
+    return true;
   };
   G.currentInvoiceKey = (acc) => G.invoiceKey(acc, G.today());
 

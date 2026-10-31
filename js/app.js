@@ -1,6 +1,6 @@
 /* Grana — casca do app: navegação, tema, primeira abertura e dados de exemplo. */
 (function (G) {
-  G.VERSION = '1.1.7'; // ao publicar: igual ao version.json e suba o VERSION do sw.js
+  G.VERSION = '1.2.0'; // ao publicar: igual ao version.json e suba o VERSION do sw.js
   G.screens = G.screens || {};
   const TABS = [['home', 'home', 'Início'], ['tx', 'list', 'Lançamentos'], ['insights', 'pie', 'Análises'], ['more', 'grid', 'Mais']];
   const MORE_ROUTES = ['accounts', 'budgets', 'goals', 'recurring', 'categories', 'import', 'settings'];
@@ -155,6 +155,7 @@
 
   async function init() {
     await G.loadState();
+    if (G.migrateInvoices()) G.save();
     G.applyTheme();
     matchMedia('(prefers-color-scheme: dark)').addEventListener('change', G.applyTheme);
     shell();

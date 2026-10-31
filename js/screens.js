@@ -133,7 +133,7 @@
       if (e.target.closest('[data-fc]')) return;
       const x = fc.items[row.dataset.fcrow];
       if (sheet) sheet.close();
-      if (x.tx) G.openAdd({ edit: x.tx });
+      if (x.tx) G.openTx(x.tx.id);
       else if (x.rec) G.editRecurring(G.state.recurring.find((r) => r.id === x.rec.id) || x.rec);
       else if (x.invoiceKey) G.openInvoice(x.account.id, x.invoiceKey);
     }));
